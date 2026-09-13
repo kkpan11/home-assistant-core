@@ -45,7 +45,15 @@ async def test_flow_user_already_configured(
 ) -> None:
     """Test user initialized flow with duplicate server."""
     result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}, data=CONF_DATA
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input=CONF_DATA,
     )
 
     assert result["type"] is FlowResultType.ABORT
@@ -60,7 +68,15 @@ async def test_flow_user_cannot_connect(
     """Test user initialized flow with unreachable server."""
     with patch_config_flow(mocked_plug_legacy_no_auth):
         result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": SOURCE_USER}, data=CONF_DATA
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input=CONF_DATA,
         )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
@@ -83,7 +99,15 @@ async def test_flow_user_unknown_error(
     with patch_config_flow(mocked_plug) as mock:
         mock.side_effect = Exception
         result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": SOURCE_USER}, data=CONF_DATA
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input=CONF_DATA,
         )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
@@ -162,7 +186,7 @@ async def test_dhcp_unique_id_assignment(
     """Test dhcp initialized flow with no unique id for matching entry."""
     dhcp_data = DhcpServiceInfo(
         ip="2.3.4.5",
-        macaddress="11:22:33:44:55:66",
+        macaddress="112233445566",
         hostname="dsp-w215",
     )
     result = await hass.config_entries.flow.async_init(
@@ -177,7 +201,7 @@ async def test_dhcp_unique_id_assignment(
         )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == CONF_DATA | {CONF_HOST: "2.3.4.5"}
-    assert result["result"].unique_id == "11:22:33:44:55:66"
+    assert result["result"].unique_id == "112233445566"
 
 
 async def test_dhcp_changed_ip(

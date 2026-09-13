@@ -13,31 +13,45 @@ from homeassistant.components.electrasmart.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from tests.common import load_fixture
+from tests.common import async_load_fixture
 
 
 async def test_form(hass: HomeAssistant) -> None:
     """Test user config."""
 
-    mock_generate_token = loads(load_fixture("generate_token_response.json", DOMAIN))
+    mock_generate_token = loads(
+        await async_load_fixture(hass, "generate_token_response.json", DOMAIN)
+    )
     with patch(
         "electrasmart.api.ElectraAPI.generate_new_token",
         return_value=mock_generate_token,
     ):
         # test with required
         result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data=None,
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input=None,
         )
 
         assert result["step_id"] == "user"
 
         # test with required
         result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={CONF_PHONE_NUMBER: "0521234567"},
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_PHONE_NUMBER: "0521234567"},
         )
 
     assert result["type"] is FlowResultType.FORM
@@ -47,8 +61,12 @@ async def test_form(hass: HomeAssistant) -> None:
 async def test_one_time_password(hass: HomeAssistant) -> None:
     """Test one time password."""
 
-    mock_generate_token = loads(load_fixture("generate_token_response.json", DOMAIN))
-    mock_otp_response = loads(load_fixture("otp_response.json", DOMAIN))
+    mock_generate_token = loads(
+        await async_load_fixture(hass, "generate_token_response.json", DOMAIN)
+    )
+    mock_otp_response = loads(
+        await async_load_fixture(hass, "otp_response.json", DOMAIN)
+    )
     with (
         patch(
             "electrasmart.api.ElectraAPI.generate_new_token",
@@ -64,9 +82,15 @@ async def test_one_time_password(hass: HomeAssistant) -> None:
         ),
     ):
         result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={CONF_PHONE_NUMBER: "0521234567", CONF_OTP: "1234"},
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_PHONE_NUMBER: "0521234567"},
         )
 
         # test with required
@@ -78,7 +102,9 @@ async def test_one_time_password(hass: HomeAssistant) -> None:
 
 async def test_one_time_password_api_error(hass: HomeAssistant) -> None:
     """Test one time password."""
-    mock_generate_token = loads(load_fixture("generate_token_response.json", DOMAIN))
+    mock_generate_token = loads(
+        await async_load_fixture(hass, "generate_token_response.json", DOMAIN)
+    )
     with (
         patch(
             "electrasmart.api.ElectraAPI.generate_new_token",
@@ -90,9 +116,15 @@ async def test_one_time_password_api_error(hass: HomeAssistant) -> None:
         ),
     ):
         result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={CONF_PHONE_NUMBER: "0521234567"},
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_PHONE_NUMBER: "0521234567"},
         )
 
         result = await hass.config_entries.flow.async_configure(
@@ -111,9 +143,15 @@ async def test_cannot_connect(hass: HomeAssistant) -> None:
     ):
         # test with required
         result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={CONF_PHONE_NUMBER: "0521234567"},
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_PHONE_NUMBER: "0521234567"},
         )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
@@ -124,7 +162,7 @@ async def test_invalid_phone_number(hass: HomeAssistant) -> None:
     """Test invalid phone number."""
 
     mock_invalid_phone_number_response = loads(
-        load_fixture("invalid_phone_number_response.json", DOMAIN)
+        await async_load_fixture(hass, "invalid_phone_number_response.json", DOMAIN)
     )
 
     with patch(
@@ -133,9 +171,15 @@ async def test_invalid_phone_number(hass: HomeAssistant) -> None:
     ):
         # test with required
         result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={CONF_PHONE_NUMBER: "0521234567"},
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_PHONE_NUMBER: "0521234567"},
         )
 
     assert result["type"] is FlowResultType.FORM
@@ -147,9 +191,11 @@ async def test_invalid_auth(hass: HomeAssistant) -> None:
     """Test invalid auth."""
 
     mock_generate_token_response = loads(
-        load_fixture("generate_token_response.json", DOMAIN)
+        await async_load_fixture(hass, "generate_token_response.json", DOMAIN)
     )
-    mock_invalid_otp_response = loads(load_fixture("invalid_otp_response.json", DOMAIN))
+    mock_invalid_otp_response = loads(
+        await async_load_fixture(hass, "invalid_otp_response.json", DOMAIN)
+    )
 
     with (
         patch(
@@ -163,9 +209,15 @@ async def test_invalid_auth(hass: HomeAssistant) -> None:
     ):
         # test with required
         result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={CONF_PHONE_NUMBER: "0521234567", CONF_OTP: "1234"},
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "user"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_PHONE_NUMBER: "0521234567"},
         )
 
         result = await hass.config_entries.flow.async_configure(

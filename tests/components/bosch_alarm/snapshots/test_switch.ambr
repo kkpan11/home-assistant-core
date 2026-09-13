@@ -1,8 +1,9 @@
 # serializer version: 1
-# name: test_switch[None-amax_3000][switch.main_door_locked-entry]
+# name: test_switch[amax_3000-None][switch.main_door_locked-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -20,6 +21,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Locked',
     'options': dict({
     }),
     'original_device_class': None,
@@ -27,16 +29,17 @@
     'original_name': 'Locked',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'locked',
     'unique_id': '01JQ917ACKQ33HHM7YCFXYZX51_door_1_locked',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-amax_3000][switch.main_door_locked-state]
+# name: test_switch[amax_3000-None][switch.main_door_locked-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Locked',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Locked',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_locked',
@@ -46,10 +49,11 @@
     'state': 'on',
   })
 # ---
-# name: test_switch[None-amax_3000][switch.main_door_momentarily_unlocked-entry]
+# name: test_switch[amax_3000-None][switch.main_door_momentarily_unlocked-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -67,6 +71,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Momentarily unlocked',
     'options': dict({
     }),
     'original_device_class': None,
@@ -74,16 +79,17 @@
     'original_name': 'Momentarily unlocked',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'cycling',
     'unique_id': '01JQ917ACKQ33HHM7YCFXYZX51_door_1_cycling',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-amax_3000][switch.main_door_momentarily_unlocked-state]
+# name: test_switch[amax_3000-None][switch.main_door_momentarily_unlocked-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Momentarily unlocked',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Momentarily unlocked',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_momentarily_unlocked',
@@ -93,10 +99,11 @@
     'state': 'off',
   })
 # ---
-# name: test_switch[None-amax_3000][switch.main_door_secured-entry]
+# name: test_switch[amax_3000-None][switch.main_door_secured-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -114,6 +121,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Secured',
     'options': dict({
     }),
     'original_device_class': None,
@@ -121,16 +129,17 @@
     'original_name': 'Secured',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'secured',
     'unique_id': '01JQ917ACKQ33HHM7YCFXYZX51_door_1_secured',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-amax_3000][switch.main_door_secured-state]
+# name: test_switch[amax_3000-None][switch.main_door_secured-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Secured',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Secured',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_secured',
@@ -140,10 +149,11 @@
     'state': 'off',
   })
 # ---
-# name: test_switch[None-amax_3000][switch.output_a-entry]
+# name: test_switch[amax_3000-None][switch.output_a-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -161,6 +171,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': None,
     'options': dict({
     }),
     'original_device_class': None,
@@ -168,16 +179,17 @@
     'original_name': None,
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': None,
     'unique_id': '01JQ917ACKQ33HHM7YCFXYZX51_output_1',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-amax_3000][switch.output_a-state]
+# name: test_switch[amax_3000-None][switch.output_a-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Output A',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Output A',
     }),
     'context': <ANY>,
     'entity_id': 'switch.output_a',
@@ -187,10 +199,11 @@
     'state': 'off',
   })
 # ---
-# name: test_switch[None-b5512][switch.main_door_locked-entry]
+# name: test_switch[b5512-None][switch.main_door_locked-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -208,6 +221,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Locked',
     'options': dict({
     }),
     'original_device_class': None,
@@ -215,16 +229,17 @@
     'original_name': 'Locked',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'locked',
     'unique_id': '1234567890_door_1_locked',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-b5512][switch.main_door_locked-state]
+# name: test_switch[b5512-None][switch.main_door_locked-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Locked',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Locked',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_locked',
@@ -234,10 +249,11 @@
     'state': 'on',
   })
 # ---
-# name: test_switch[None-b5512][switch.main_door_momentarily_unlocked-entry]
+# name: test_switch[b5512-None][switch.main_door_momentarily_unlocked-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -255,6 +271,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Momentarily unlocked',
     'options': dict({
     }),
     'original_device_class': None,
@@ -262,16 +279,17 @@
     'original_name': 'Momentarily unlocked',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'cycling',
     'unique_id': '1234567890_door_1_cycling',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-b5512][switch.main_door_momentarily_unlocked-state]
+# name: test_switch[b5512-None][switch.main_door_momentarily_unlocked-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Momentarily unlocked',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Momentarily unlocked',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_momentarily_unlocked',
@@ -281,10 +299,11 @@
     'state': 'off',
   })
 # ---
-# name: test_switch[None-b5512][switch.main_door_secured-entry]
+# name: test_switch[b5512-None][switch.main_door_secured-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -302,6 +321,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Secured',
     'options': dict({
     }),
     'original_device_class': None,
@@ -309,16 +329,17 @@
     'original_name': 'Secured',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'secured',
     'unique_id': '1234567890_door_1_secured',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-b5512][switch.main_door_secured-state]
+# name: test_switch[b5512-None][switch.main_door_secured-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Secured',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Secured',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_secured',
@@ -328,10 +349,11 @@
     'state': 'off',
   })
 # ---
-# name: test_switch[None-b5512][switch.output_a-entry]
+# name: test_switch[b5512-None][switch.output_a-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -349,6 +371,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': None,
     'options': dict({
     }),
     'original_device_class': None,
@@ -356,16 +379,17 @@
     'original_name': None,
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': None,
     'unique_id': '1234567890_output_1',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-b5512][switch.output_a-state]
+# name: test_switch[b5512-None][switch.output_a-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Output A',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Output A',
     }),
     'context': <ANY>,
     'entity_id': 'switch.output_a',
@@ -375,10 +399,11 @@
     'state': 'off',
   })
 # ---
-# name: test_switch[None-solution_3000][switch.main_door_locked-entry]
+# name: test_switch[solution_3000-None][switch.main_door_locked-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -396,6 +421,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Locked',
     'options': dict({
     }),
     'original_device_class': None,
@@ -403,16 +429,17 @@
     'original_name': 'Locked',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'locked',
     'unique_id': '01JQ917ACKQ33HHM7YCFXYZX51_door_1_locked',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-solution_3000][switch.main_door_locked-state]
+# name: test_switch[solution_3000-None][switch.main_door_locked-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Locked',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Locked',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_locked',
@@ -422,10 +449,11 @@
     'state': 'on',
   })
 # ---
-# name: test_switch[None-solution_3000][switch.main_door_momentarily_unlocked-entry]
+# name: test_switch[solution_3000-None][switch.main_door_momentarily_unlocked-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -443,6 +471,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Momentarily unlocked',
     'options': dict({
     }),
     'original_device_class': None,
@@ -450,16 +479,17 @@
     'original_name': 'Momentarily unlocked',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'cycling',
     'unique_id': '01JQ917ACKQ33HHM7YCFXYZX51_door_1_cycling',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-solution_3000][switch.main_door_momentarily_unlocked-state]
+# name: test_switch[solution_3000-None][switch.main_door_momentarily_unlocked-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Momentarily unlocked',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Momentarily unlocked',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_momentarily_unlocked',
@@ -469,10 +499,11 @@
     'state': 'off',
   })
 # ---
-# name: test_switch[None-solution_3000][switch.main_door_secured-entry]
+# name: test_switch[solution_3000-None][switch.main_door_secured-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -490,6 +521,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': 'Secured',
     'options': dict({
     }),
     'original_device_class': None,
@@ -497,16 +529,17 @@
     'original_name': 'Secured',
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': 'secured',
     'unique_id': '01JQ917ACKQ33HHM7YCFXYZX51_door_1_secured',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-solution_3000][switch.main_door_secured-state]
+# name: test_switch[solution_3000-None][switch.main_door_secured-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Main Door Secured',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Main Door Secured',
     }),
     'context': <ANY>,
     'entity_id': 'switch.main_door_secured',
@@ -516,10 +549,11 @@
     'state': 'off',
   })
 # ---
-# name: test_switch[None-solution_3000][switch.output_a-entry]
+# name: test_switch[solution_3000-None][switch.output_a-entry]
   EntityRegistryEntrySnapshot({
-    'aliases': set({
-    }),
+    'aliases': list([
+      None,
+    ]),
     'area_id': None,
     'capabilities': None,
     'config_entry_id': <ANY>,
@@ -537,6 +571,7 @@
     'labels': set({
     }),
     'name': None,
+    'object_id_base': None,
     'options': dict({
     }),
     'original_device_class': None,
@@ -544,16 +579,17 @@
     'original_name': None,
     'platform': 'bosch_alarm',
     'previous_unique_id': None,
+    'suggested_object_id': None,
     'supported_features': 0,
     'translation_key': None,
     'unique_id': '01JQ917ACKQ33HHM7YCFXYZX51_output_1',
     'unit_of_measurement': None,
   })
 # ---
-# name: test_switch[None-solution_3000][switch.output_a-state]
+# name: test_switch[solution_3000-None][switch.output_a-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      'friendly_name': 'Output A',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Output A',
     }),
     'context': <ANY>,
     'entity_id': 'switch.output_a',

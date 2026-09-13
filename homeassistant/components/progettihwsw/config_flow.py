@@ -1,7 +1,7 @@
 """Config flow for ProgettiHWSW Automation integration."""
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
 from ProgettiHWSW.ProgettiHWSWAPI import ProgettiHWSWAPI
 import voluptuous as vol
@@ -30,9 +30,9 @@ async def validate_input(hass: HomeAssistant, data):
 
     return {
         "title": is_valid["title"],
-        "relay_count": is_valid["relay_count"],
-        "input_count": is_valid["input_count"],
-        "is_old": is_valid["is_old"],
+        "relay_count": is_valid["relays"],
+        "input_count": is_valid["inputs"],
+        "is_old": is_valid["temps"],
     }
 
 
@@ -75,6 +75,7 @@ class ProgettiHWSWConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    @override
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:

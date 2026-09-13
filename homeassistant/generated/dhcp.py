@@ -3,11 +3,26 @@
 To update, run python3 -m script.hassfest
 """
 
-from __future__ import annotations
-
 from typing import Final
 
 DHCP: Final[list[dict[str, str | bool]]] = [
+    {
+        "domain": "actron_air",
+        "hostname": "neo-*",
+        "macaddress": "FC0FE7*",
+    },
+    {
+        "domain": "aidot",
+        "hostname": "aidot",
+    },
+    {
+        "domain": "airobot",
+        "hostname": "airobot-thermostat-*",
+    },
+    {
+        "domain": "airos",
+        "registered_devices": True,
+    },
     {
         "domain": "airthings",
         "hostname": "airthings-view",
@@ -25,6 +40,10 @@ DHCP: Final[list[dict[str, str | bool]]] = [
     {
         "domain": "airzone",
         "macaddress": "E84F25*",
+    },
+    {
+        "domain": "aladdin_connect",
+        "hostname": "gdocntl-*",
     },
     {
         "domain": "august",
@@ -82,6 +101,154 @@ DHCP: Final[list[dict[str, str | bool]]] = [
     {
         "domain": "balboa",
         "macaddress": "001527*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "rollergate*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "gatebox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "doorbox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "shutterbox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "switchbox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "dimmerbox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "dacbox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "wlightbox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "pixelbox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "saunabox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "thermobox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "tempsensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "energymeter*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "airsensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "humiditysensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "rainsensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "floodsensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "luxsensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "inputsensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "opensensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "windsensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "co2sensor*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "simongo*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "sabaj-k-smrt*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "rico*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "smartrollergate*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "darco_ero_32ws_0*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "pergoladc*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "seltsmartscreen*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "seltvenetianblind*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "doorunitbox*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "drutexsmart*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "swingatecontroller*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "windowopener*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "smartawning*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "smartshade*",
+    },
+    {
+        "domain": "blebox",
+        "hostname": "smartshutter*",
     },
     {
         "domain": "blink",
@@ -155,6 +322,22 @@ DHCP: Final[list[dict[str, str | bool]]] = [
     {
         "domain": "dlink",
         "hostname": "dsp-w215",
+    },
+    {
+        "domain": "duco",
+        "hostname": "duco_[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]",
+    },
+    {
+        "domain": "earn_e_p1",
+        "hostname": "energiemonitor-*",
+    },
+    {
+        "domain": "earn_e_p1",
+        "registered_devices": True,
+    },
+    {
+        "domain": "elgato",
+        "registered_devices": True,
     },
     {
         "domain": "elkm1",
@@ -246,6 +429,10 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "registered_devices": True,
     },
     {
+        "domain": "fumis",
+        "macaddress": "0016D0*",
+    },
+    {
         "domain": "fyta",
         "hostname": "fyta*",
     },
@@ -277,18 +464,27 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "macaddress": "30AEA4*",
     },
     {
+        "domain": "guntamatic",
+        "hostname": "kessel*",
+        "macaddress": "0024BD*",
+    },
+    {
+        "domain": "harbor",
+        "hostname": "harborc-*",
+    },
+    {
         "domain": "home_connect",
         "hostname": "balay-*",
         "macaddress": "C8D778*",
     },
     {
         "domain": "home_connect",
-        "hostname": "(bosch|siemens)-*",
+        "hostname": "(balay|bosch|neff|siemens)-*",
         "macaddress": "68A40E*",
     },
     {
         "domain": "home_connect",
-        "hostname": "siemens-*",
+        "hostname": "(bosch|neff|siemens)-*",
         "macaddress": "38B4D3*",
     },
     {
@@ -305,12 +501,64 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "macaddress": "002674*",
     },
     {
+        "domain": "iaqualink",
+        "hostname": "iaqualink-*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "1C4D89*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "302450*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "38AF29*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "3CE36B*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "3CEF8C*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "906A94*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "A0BD1D*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "A83162*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "AC3DFA*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "B44C3B*",
+    },
+    {
+        "domain": "imou",
+        "macaddress": "FCB69D*",
+    },
+    {
         "domain": "incomfort",
         "hostname": "rfgateway",
         "macaddress": "0004A3*",
     },
     {
         "domain": "incomfort",
+        "registered_devices": True,
+    },
+    {
+        "domain": "indevolt",
         "registered_devices": True,
     },
     {
@@ -369,6 +617,10 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "registered_devices": True,
     },
     {
+        "domain": "lg_thinq",
+        "macaddress": "34E6E6*",
+    },
+    {
         "domain": "lifx",
         "macaddress": "D073D5*",
     },
@@ -379,6 +631,10 @@ DHCP: Final[list[dict[str, str | bool]]] = [
     {
         "domain": "litterrobot",
         "hostname": "litter-robot4",
+    },
+    {
+        "domain": "litterrobot",
+        "hostname": "whiskerrobots",
     },
     {
         "domain": "lyric",
@@ -394,6 +650,14 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "domain": "lyric",
         "hostname": "lyric-*",
         "macaddress": "00D02D*",
+    },
+    {
+        "domain": "midea",
+        "registered_devices": True,
+    },
+    {
+        "domain": "mitsubishi_comfort",
+        "registered_devices": True,
     },
     {
         "domain": "motion_blinds",
@@ -412,6 +676,22 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "hostname": "connector_*",
     },
     {
+        "domain": "my_pv",
+        "registered_devices": True,
+    },
+    {
+        "domain": "my_pv",
+        "macaddress": "986D35C*",
+    },
+    {
+        "domain": "mystrom",
+        "hostname": "mystrom-*",
+    },
+    {
+        "domain": "mystrom",
+        "registered_devices": True,
+    },
+    {
         "domain": "nest",
         "macaddress": "18B430*",
     },
@@ -427,6 +707,15 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "domain": "nexia",
         "hostname": "xl857-*",
         "macaddress": "000231*",
+    },
+    {
+        "domain": "nobo_hub",
+        "registered_devices": True,
+    },
+    {
+        "domain": "nobo_hub",
+        "hostname": "hub*",
+        "macaddress": "7C8306*",
     },
     {
         "domain": "nuheat",
@@ -460,12 +749,128 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "registered_devices": True,
     },
     {
+        "domain": "playstation_network",
+        "macaddress": "AC8995*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "1C98C1*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "5C843C*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "605BB4*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "8060B7*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "78C881*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "00D9D1*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "00E421*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "0CFE45*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "2CCC44*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "BC60A7*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "C863F1*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "F8461C*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "70662A*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "09E29*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "B40AD8*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "A8474A*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "280DFC*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "D44B5E*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "F8D0AC*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "E86E3A*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "FC0FE6*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "9C37CB*",
+    },
+    {
+        "domain": "playstation_network",
+        "macaddress": "84E657*",
+    },
+    {
+        "domain": "playstation_network",
+        "hostname": "ps5-*",
+    },
+    {
+        "domain": "playstation_network",
+        "hostname": "ps4-*",
+    },
+    {
+        "domain": "playstation_network",
+        "hostname": "ps3",
+    },
+    {
+        "domain": "pooldose",
+        "hostname": "kommspot",
+    },
+    {
         "domain": "powerwall",
         "hostname": "1118431-*",
     },
     {
         "domain": "powerwall",
         "hostname": "1232100-*",
+    },
+    {
+        "domain": "powerwall",
+        "hostname": "teslapw_*",
     },
     {
         "domain": "prusalink",
@@ -578,6 +983,10 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "macaddress": "204EF6*",
     },
     {
+        "domain": "roomba",
+        "registered_devices": True,
+    },
+    {
         "domain": "ruuvi_gateway",
         "hostname": "ruuvigateway*",
     },
@@ -685,6 +1094,15 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "macaddress": "286D97*",
     },
     {
+        "domain": "smartthings",
+        "hostname": "smarthub",
+        "macaddress": "683A48*",
+    },
+    {
+        "domain": "smartthings",
+        "hostname": "samsung-*",
+    },
+    {
         "domain": "smlight",
         "registered_devices": True,
     },
@@ -713,12 +1131,28 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "macaddress": "001E0C*",
     },
     {
+        "domain": "stiebel_eltron",
+        "hostname": "servicewelt*",
+    },
+    {
+        "domain": "sunricher_dali",
+        "registered_devices": True,
+    },
+    {
         "domain": "tado",
         "hostname": "tado*",
     },
     {
         "domain": "tailwind",
         "registered_devices": True,
+    },
+    {
+        "domain": "teltonika",
+        "macaddress": "209727*",
+    },
+    {
+        "domain": "teltonika",
+        "macaddress": "001E42*",
     },
     {
         "domain": "tesla_wall_connector",
@@ -1161,43 +1595,43 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "hostname": "twinkly-*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "B4FBE4*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "802AA8*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "F09FC2*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "68D79A*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "18E829*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "245A4C*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "784558*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "E063DA*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "265A4C*",
     },
     {
-        "domain": "unifiprotect",
+        "domain": "unifi_discovery",
         "macaddress": "74ACB9*",
     },
     {
@@ -1210,12 +1644,24 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "macaddress": "0023C1*",
     },
     {
+        "domain": "vesync",
+        "hostname": "levoit-*",
+    },
+    {
         "domain": "vicare",
         "macaddress": "B87424*",
     },
     {
+        "domain": "vistapool",
+        "hostname": "sugarwifi",
+    },
+    {
         "domain": "withings",
         "macaddress": "0024E4*",
+    },
+    {
+        "domain": "withings",
+        "macaddress": "A47EFA*",
     },
     {
         "domain": "wiz",
@@ -1250,6 +1696,10 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "registered_devices": True,
     },
     {
+        "domain": "xbox",
+        "hostname": "xbox*",
+    },
+    {
         "domain": "yale",
         "hostname": "yale-connect-plus",
         "macaddress": "00177A*",
@@ -1257,5 +1707,9 @@ DHCP: Final[list[dict[str, str | bool]]] = [
     {
         "domain": "yeelight",
         "hostname": "yeelink-*",
+    },
+    {
+        "domain": "yoto",
+        "hostname": "yoto-*",
     },
 ]

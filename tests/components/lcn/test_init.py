@@ -84,11 +84,10 @@ async def test_async_setup_entry_update(
     dummy_device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.entry_id, 0, 7, False)},
-        via_device=(DOMAIN, entry.entry_id),
     )
 
     assert dummy_entity in entity_registry.entities.values()
-    assert dummy_device in device_registry.devices.values()
+    assert dummy_device in device_registry.devices
 
 
 @pytest.mark.parametrize(
@@ -178,8 +177,8 @@ async def test_migrate_2_1(hass: HomeAssistant, snapshot: SnapshotAssertion) -> 
 @pytest.mark.parametrize(
     ("entity_id", "replace"),
     [
-        ("climate.climate1", ("-r1varsetpoint", "-var1.r1varsetpoint")),
-        ("scene.romantic", ("-00", "-0.0")),
+        ("climate.testmodule_climate1", ("-r1varsetpoint", "-var1.r1varsetpoint")),
+        ("scene.testmodule_romantic", ("-00", "-0.0")),
     ],
 )
 @patch("homeassistant.components.lcn.PchkConnectionManager", MockPchkConnectionManager)

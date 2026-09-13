@@ -3,9 +3,10 @@
 from unittest.mock import MagicMock
 
 import pytest
-from syrupy import SnapshotAssertion
+from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.components.openweathermap.const import (
+    OWM_MODE_AIRPOLLUTION,
     OWM_MODE_FREE_CURRENT,
     OWM_MODE_FREE_FORECAST,
     OWM_MODE_V30,
@@ -19,7 +20,9 @@ from . import setup_platform
 from tests.common import MockConfigEntry, snapshot_platform
 
 
-@pytest.mark.parametrize("mode", [OWM_MODE_V30, OWM_MODE_FREE_CURRENT], indirect=True)
+@pytest.mark.parametrize(
+    "mode", [OWM_MODE_V30, OWM_MODE_FREE_CURRENT, OWM_MODE_AIRPOLLUTION], indirect=True
+)
 async def test_sensor_states(
     hass: HomeAssistant,
     snapshot: SnapshotAssertion,
@@ -28,7 +31,7 @@ async def test_sensor_states(
     owm_client_mock: MagicMock,
     mode: str,
 ) -> None:
-    """Test sensor states are correctly collected from library with different modes and mocked function responses."""
+    """Test sensor states are collected from library correctly."""
 
     await setup_platform(hass, mock_config_entry, [Platform.SENSOR])
     await snapshot_platform(hass, entity_registry, snapshot, mock_config_entry.entry_id)

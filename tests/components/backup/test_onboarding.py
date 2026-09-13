@@ -5,12 +5,12 @@ from typing import Any
 from unittest.mock import ANY, patch
 
 import pytest
-from syrupy import SnapshotAssertion
+from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.components import backup, onboarding
+from homeassistant.components.backup import DOMAIN
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.backup import async_initialize_backup
 from homeassistant.setup import async_setup_component
 
 from tests.common import register_auth_provider
@@ -57,8 +57,7 @@ async def test_onboarding_view_after_done(
     mock_onboarding_storage(hass_storage, {"done": [onboarding.const.STEP_USER]})
 
     assert await async_setup_component(hass, "onboarding", {})
-    async_initialize_backup(hass)
-    assert await async_setup_component(hass, "backup", {})
+    assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
     client = await hass_client()
@@ -111,8 +110,7 @@ async def test_onboarding_backup_info(
     mock_onboarding_storage(hass_storage, {"done": []})
 
     assert await async_setup_component(hass, "onboarding", {})
-    async_initialize_backup(hass)
-    assert await async_setup_component(hass, "backup", {})
+    assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
     client = await hass_client()
@@ -124,14 +122,16 @@ async def test_onboarding_backup_info(
                 "backup.local": backup.manager.AgentBackupStatus(protected=True, size=0)
             },
             backup_id="abc123",
-            date="1970-01-01T00:00:00.000Z",
             database_included=True,
+            date="1970-01-01T00:00:00.000Z",
             extra_metadata={"instance_id": "abc123", "with_automatic_settings": True},
+            failed_addons=[],
+            failed_agent_ids=[],
+            failed_folders=[],
             folders=[backup.Folder.MEDIA, backup.Folder.SHARE],
             homeassistant_included=True,
             homeassistant_version="2024.12.0",
             name="Test",
-            failed_agent_ids=[],
             with_automatic_settings=True,
         ),
         "def456": backup.ManagerBackup(
@@ -140,17 +140,19 @@ async def test_onboarding_backup_info(
                 "test.remote": backup.manager.AgentBackupStatus(protected=True, size=0)
             },
             backup_id="def456",
-            date="1980-01-01T00:00:00.000Z",
             database_included=False,
+            date="1980-01-01T00:00:00.000Z",
             extra_metadata={
                 "instance_id": "unknown_uuid",
                 "with_automatic_settings": True,
             },
+            failed_addons=[],
+            failed_agent_ids=[],
+            failed_folders=[],
             folders=[backup.Folder.MEDIA, backup.Folder.SHARE],
             homeassistant_included=True,
             homeassistant_version="2024.12.0",
             name="Test 2",
-            failed_agent_ids=[],
             with_automatic_settings=None,
         ),
     }
@@ -228,8 +230,7 @@ async def test_onboarding_backup_restore(
     mock_onboarding_storage(hass_storage, {"done": []})
 
     assert await async_setup_component(hass, "onboarding", {})
-    async_initialize_backup(hass)
-    assert await async_setup_component(hass, "backup", {})
+    assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
     client = await hass_client()
@@ -251,7 +252,9 @@ async def test_onboarding_backup_restore(
             None,
             400,
             {
-                "message": "Message format incorrect: required key not provided @ data['agent_id']"
+                "message": (
+                    "Message format incorrect: required key not provided at 'agent_id'"
+                )
             },
             0,
         ),
@@ -261,7 +264,9 @@ async def test_onboarding_backup_restore(
             None,
             400,
             {
-                "message": "Message format incorrect: required key not provided @ data['backup_id']"
+                "message": (
+                    "Message format incorrect: required key not provided at 'backup_id'"
+                )
             },
             0,
         ),
@@ -275,7 +280,9 @@ async def test_onboarding_backup_restore(
             None,
             400,
             {
-                "message": "Message format incorrect: expected bool for dictionary value @ data['restore_database']"
+                "message": (
+                    "Message format incorrect: expected bool at 'restore_database'"
+                )
             },
             0,
         ),
@@ -289,7 +296,12 @@ async def test_onboarding_backup_restore(
             None,
             400,
             {
-                "message": "Message format incorrect: expected Folder or one of 'share', 'addons/local', 'ssl', 'media' @ data['restore_folders'][0]"
+                "message": (
+                    "Message format incorrect: expected"
+                    " Folder or one of 'share',"
+                    " 'addons/local', 'ssl', 'media'"
+                    " at 'restore_folders[0]'"
+                )
             },
             0,
         ),
@@ -325,8 +337,7 @@ async def test_onboarding_backup_restore_error(
     mock_onboarding_storage(hass_storage, {"done": []})
 
     assert await async_setup_component(hass, "onboarding", {})
-    async_initialize_backup(hass)
-    assert await async_setup_component(hass, "backup", {})
+    assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
     client = await hass_client()
@@ -369,8 +380,7 @@ async def test_onboarding_backup_restore_unexpected_error(
     mock_onboarding_storage(hass_storage, {"done": []})
 
     assert await async_setup_component(hass, "onboarding", {})
-    async_initialize_backup(hass)
-    assert await async_setup_component(hass, "backup", {})
+    assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
     client = await hass_client()
@@ -395,8 +405,7 @@ async def test_onboarding_backup_upload(
     mock_onboarding_storage(hass_storage, {"done": []})
 
     assert await async_setup_component(hass, "onboarding", {})
-    async_initialize_backup(hass)
-    assert await async_setup_component(hass, "backup", {})
+    assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
     client = await hass_client()

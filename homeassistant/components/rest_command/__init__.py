@@ -1,7 +1,5 @@
 """Support for exposing regular REST commands as services."""
 
-from __future__ import annotations
-
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
 import logging
@@ -9,9 +7,12 @@ from typing import Any
 
 import aiohttp
 from aiohttp import hdrs
+from multidict import CIMultiDict
 import voluptuous as vol
+from yarl import URL
 
 from homeassistant.const import (
+    CONF_AUTHENTICATION,
     CONF_HEADERS,
     CONF_METHOD,
     CONF_PASSWORD,
@@ -20,6 +21,8 @@ from homeassistant.const import (
     CONF_URL,
     CONF_USERNAME,
     CONF_VERIFY_SSL,
+    HTTP_BASIC_AUTHENTICATION,
+    HTTP_DIGEST_AUTHENTICATION,
     SERVICE_RELOAD,
 )
 from homeassistant.core import (
@@ -48,6 +51,7 @@ SUPPORT_REST_METHODS = ["get", "patch", "post", "put", "delete"]
 
 CONF_CONTENT_TYPE = "content_type"
 CONF_INSECURE_CIPHER = "insecure_cipher"
+CONF_SKIP_URL_ENCODING = "skip_url_encoding"
 
 COMMAND_SCHEMA = vol.Schema(
     {
@@ -56,13 +60,20 @@ COMMAND_SCHEMA = vol.Schema(
             vol.Lower, vol.In(SUPPORT_REST_METHODS)
         ),
         vol.Optional(CONF_HEADERS): vol.Schema({cv.string: cv.template}),
-        vol.Inclusive(CONF_USERNAME, "authentication"): cv.string,
+        vol.Optional(CONF_AUTHENTICATION): vol.In(
+            [HTTP_BASIC_AUTHENTICATION, HTTP_DIGEST_AUTHENTICATION]
+        ),
+        # A colon cannot be encoded into basic credentials, RFC 7617#section-2
+        vol.Inclusive(CONF_USERNAME, "authentication"): vol.All(
+            cv.string, vol.Match(r"^[^:]*$")
+        ),
         vol.Inclusive(CONF_PASSWORD, "authentication"): cv.string,
         vol.Optional(CONF_PAYLOAD): cv.template,
         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): vol.Coerce(int),
         vol.Optional(CONF_CONTENT_TYPE): cv.string,
         vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): cv.boolean,
         vol.Optional(CONF_INSECURE_CIPHER, default=False): cv.boolean,
+        vol.Optional(CONF_SKIP_URL_ENCODING, default=False): cv.boolean,
     }
 )
 
@@ -107,12 +118,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         method = command_config[CONF_METHOD]
 
         template_url = command_config[CONF_URL]
+        skip_url_encoding = command_config[CONF_SKIP_URL_ENCODING]
 
-        auth = None
+        basic_auth: tuple[str, str] | None = None
+        digest_auth: tuple[str, str] | None = None
         if CONF_USERNAME in command_config:
             username = command_config[CONF_USERNAME]
             password = command_config.get(CONF_PASSWORD, "")
-            auth = aiohttp.BasicAuth(username, password=password)
+            if command_config.get(CONF_AUTHENTICATION) == HTTP_DIGEST_AUTHENTICATION:
+                digest_auth = (username, password)
+            else:
+                basic_auth = (username, password)
 
         template_payload = None
         if CONF_PAYLOAD in command_config:
@@ -154,13 +170,32 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 payload,
             )
 
+            # Kept out of the debug log above so the credentials are not logged.
+            # Encoding here rather than at registration keeps a credential
+            # outside latin-1 a failure of this call, not of the whole setup.
+            request_headers = CIMultiDict(headers)
+            if basic_auth is not None and hdrs.AUTHORIZATION not in request_headers:
+                request_headers[hdrs.AUTHORIZATION] = aiohttp.encode_basic_auth(
+                    *basic_auth, encoding="latin1"
+                )
+
             try:
+                # Prepare request kwargs
+                request_kwargs = {
+                    "data": payload,
+                    "headers": request_headers or None,
+                    "timeout": timeout,
+                }
+
+                # Add authentication
+                if digest_auth is not None:
+                    request_kwargs["middlewares"] = (
+                        aiohttp.DigestAuthMiddleware(*digest_auth),
+                    )
+
                 async with getattr(websession, method)(
-                    request_url,
-                    data=payload,
-                    auth=auth,
-                    headers=headers or None,
-                    timeout=timeout,
+                    URL(request_url, encoded=skip_url_encoding),
+                    **request_kwargs,
                 ) as response:
                     if response.status < HTTPStatus.BAD_REQUEST:
                         _LOGGER.debug(
@@ -178,6 +213,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                         )
 
                     if not service.return_response:
+                        # always read the response to avoid closing
+                        # the connection before the server has
+                        # finished sending it, while avoiding
+                        # excessive memory usage
+                        async for _ in response.content.iter_chunked(1024):
+                            pass
+
                         return None
 
                     _content = None
@@ -205,7 +247,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                                 "decoding_type": "text",
                             },
                         ) from err
-                    return {"content": _content, "status": response.status}
+                    return {
+                        "content": _content,
+                        "status": response.status,
+                        "headers": {
+                            key: values[0] if len(values) == 1 else values
+                            for key in response.headers
+                            if (values := response.headers.getall(key))
+                        },
+                    }
 
             except TimeoutError as err:
                 raise HomeAssistantError(

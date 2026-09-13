@@ -3,8 +3,8 @@
 import logging
 from typing import Any
 
+from probatio import to_field_list
 import pytest
-import voluptuous_serialize
 from zigpy.application import ControllerApplication
 from zigpy.types.basic import uint16_t
 from zigpy.zcl.clusters import lighting
@@ -71,15 +71,17 @@ async def test_zcl_schema_conversions(hass: HomeAssistant) -> None:
             "options": ["Execute if off present"],
             "name": "options_mask",
             "optional": True,
+            "required": False,
         },
         {
             "type": "multi_select",
             "options": ["Execute if off"],
             "name": "options_override",
             "optional": True,
+            "required": False,
         },
     ]
-    vol_schema = voluptuous_serialize.convert(
+    vol_schema = to_field_list(
         cluster_command_schema_to_vol_schema(command_schema),
         custom_serializer=cv.custom_serializer,
     )

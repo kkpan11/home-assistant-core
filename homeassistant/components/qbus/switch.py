@@ -1,17 +1,16 @@
 """Support for Qbus switch."""
 
-from typing import Any
+from typing import Any, override
 
 from qbusmqttapi.discovery import QbusMqttOutput
 from qbusmqttapi.state import QbusMqttOnOffState, StateType
 
-from homeassistant.components.mqtt import ReceiveMessage
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import QbusConfigEntry
-from .entity import QbusEntity, add_new_outputs
+from .entity import QbusEntity, create_new_entities
 
 PARALLEL_UPDATES = 0
 
@@ -27,21 +26,24 @@ async def async_setup_entry(
     added_outputs: list[QbusMqttOutput] = []
 
     def _check_outputs() -> None:
-        add_new_outputs(
+        entities = create_new_entities(
             coordinator,
             added_outputs,
             lambda output: output.type == "onoff",
             QbusSwitch,
-            async_add_entities,
         )
+        async_add_entities(entities)
 
     _check_outputs()
-    entry.async_on_unload(coordinator.async_add_listener(_check_outputs))
+    coordinator.async_add_listener(_check_outputs)
 
 
 class QbusSwitch(QbusEntity, SwitchEntity):
     """Representation of a Qbus switch entity."""
 
+    _state_cls = QbusMqttOnOffState
+
+    _attr_name = None
     _attr_device_class = SwitchDeviceClass.SWITCH
 
     def __init__(self, mqtt_output: QbusMqttOutput) -> None:
@@ -51,6 +53,7 @@ class QbusSwitch(QbusEntity, SwitchEntity):
 
         self._attr_is_on = False
 
+    @override
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
         state = QbusMqttOnOffState(id=self._mqtt_output.id, type=StateType.STATE)
@@ -58,6 +61,7 @@ class QbusSwitch(QbusEntity, SwitchEntity):
 
         await self._async_publish_output_state(state)
 
+    @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
         state = QbusMqttOnOffState(id=self._mqtt_output.id, type=StateType.STATE)
@@ -65,11 +69,6 @@ class QbusSwitch(QbusEntity, SwitchEntity):
 
         await self._async_publish_output_state(state)
 
-    async def _state_received(self, msg: ReceiveMessage) -> None:
-        output = self._message_factory.parse_output_state(
-            QbusMqttOnOffState, msg.payload
-        )
-
-        if output is not None:
-            self._attr_is_on = output.read_value()
-            self.async_schedule_update_ha_state()
+    @override
+    async def _handle_state_received(self, state: QbusMqttOnOffState) -> None:
+        self._attr_is_on = state.read_value()

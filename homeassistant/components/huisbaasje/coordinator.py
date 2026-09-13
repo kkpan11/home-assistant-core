@@ -3,7 +3,7 @@
 import asyncio
 from datetime import timedelta
 import logging
-from typing import Any
+from typing import Any, override
 
 from energyflip import EnergyFlip, EnergyFlipException
 
@@ -27,16 +27,18 @@ PLATFORMS = [Platform.SENSOR]
 
 _LOGGER = logging.getLogger(__name__)
 
+type EnergyFlipConfigEntry = ConfigEntry[EnergyFlipUpdateCoordinator]
+
 
 class EnergyFlipUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """EnergyFlip data update coordinator."""
 
-    config_entry: ConfigEntry
+    config_entry: EnergyFlipConfigEntry
 
     def __init__(
         self,
         hass: HomeAssistant,
-        config_entry: ConfigEntry,
+        config_entry: EnergyFlipConfigEntry,
         energyflip: EnergyFlip,
     ) -> None:
         """Initialize the Huisbaasje data coordinator."""
@@ -50,6 +52,7 @@ class EnergyFlipUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]
 
         self._energyflip = energyflip
 
+    @override
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         """Update the data by performing a request to EnergyFlip."""
         try:

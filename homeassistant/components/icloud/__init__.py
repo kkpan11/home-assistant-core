@@ -1,15 +1,14 @@
 """The iCloud component."""
 
-from __future__ import annotations
-
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.typing import ConfigType
 
-from .account import IcloudAccount
+from .account import IcloudAccount, IcloudConfigEntry
 from .const import (
     CONF_GPS_ACCURACY_THRESHOLD,
     CONF_MAX_INTERVAL,
@@ -19,13 +18,23 @@ from .const import (
     STORAGE_KEY,
     STORAGE_VERSION,
 )
-from .services import register_services
+from .coordinator import IcloudCalendarCoordinator, IcloudRemindersCoordinator
+from .media_source import async_setup_mediasource, async_setup_photo_cache
+from .services import async_setup_services
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up iCloud integration."""
+
+    async_setup_services(hass)
+    async_setup_mediasource(hass)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: IcloudConfigEntry) -> bool:
     """Set up an iCloud account from a config entry."""
-
-    hass.data.setdefault(DOMAIN, {})
 
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
@@ -49,20 +58,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gps_accuracy_threshold,
         entry,
     )
+
+    entry.runtime_data = account
+
     await hass.async_add_executor_job(account.setup)
 
-    hass.data[DOMAIN][entry.unique_id] = account
+    # Refreshed before the platforms are forwarded so the calendars and lists
+    # are known by the time their platforms set up. This deliberately does not
+    # use async_config_entry_first_refresh: an account that fails to
+    # authenticate still loads and starts a reauth flow, and a calendar or
+    # Reminders outage should not take device tracking down with it. Anything
+    # missing from the first refresh appears on a later one through the
+    # coordinator listener.
+    account.calendar_coordinator = IcloudCalendarCoordinator(hass, entry)
+    await account.calendar_coordinator.async_refresh()
+
+    account.reminders_coordinator = IcloudRemindersCoordinator(hass, entry)
+    await account.reminders_coordinator.async_refresh()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    register_services(hass)
+    await async_setup_photo_cache(hass, account)
 
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: IcloudConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.data[CONF_USERNAME])
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        await hass.async_add_executor_job(entry.runtime_data.cancel_fetch)
     return unload_ok

@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from eheimdigital.heater import EheimDigitalHeater
 from eheimdigital.types import (
     EheimDeviceType,
     EheimDigitalClientError,
@@ -67,12 +68,12 @@ async def test_setup_heater(
 async def test_dynamic_new_devices(
     hass: HomeAssistant,
     eheimdigital_hub_mock: MagicMock,
-    heater_mock: MagicMock,
+    heater_mock: EheimDigitalHeater,
     entity_registry: er.EntityRegistry,
     snapshot: SnapshotAssertion,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Test light platform setup with at first no devices and dynamically adding a device."""
+    """Test platform setup with no devices and dynamically adding one."""
     mock_config_entry.add_to_hass(hass)
 
     eheimdigital_hub_mock.return_value.devices = {}
@@ -116,7 +117,7 @@ async def test_dynamic_new_devices(
 async def test_set_preset_mode(
     hass: HomeAssistant,
     eheimdigital_hub_mock: MagicMock,
-    heater_mock: MagicMock,
+    heater_mock: EheimDigitalHeater,
     mock_config_entry: MockConfigEntry,
     preset_mode: str,
     heater_mode: HeaterMode,
@@ -129,26 +130,33 @@ async def test_set_preset_mode(
     )
     await hass.async_block_till_done()
 
-    heater_mock.set_operation_mode.side_effect = EheimDigitalClientError
+    heater_mock.hub.send_packet.side_effect = EheimDigitalClientError
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
             CLIMATE_DOMAIN,
             SERVICE_SET_PRESET_MODE,
-            {ATTR_ENTITY_ID: "climate.mock_heater", ATTR_PRESET_MODE: preset_mode},
+            {
+                ATTR_ENTITY_ID: "climate.mock_aquarium_mock_heater",
+                ATTR_PRESET_MODE: preset_mode,
+            },
             blocking=True,
         )
 
-    heater_mock.set_operation_mode.side_effect = None
+    heater_mock.hub.send_packet.side_effect = None
 
     await hass.services.async_call(
         CLIMATE_DOMAIN,
         SERVICE_SET_PRESET_MODE,
-        {ATTR_ENTITY_ID: "climate.mock_heater", ATTR_PRESET_MODE: preset_mode},
+        {
+            ATTR_ENTITY_ID: "climate.mock_aquarium_mock_heater",
+            ATTR_PRESET_MODE: preset_mode,
+        },
         blocking=True,
     )
 
-    heater_mock.set_operation_mode.assert_awaited_with(heater_mode)
+    calls = [call for call in heater_mock.hub.mock_calls if call[0] == "send_packet"]
+    assert len(calls) == 2 and calls[1][1][0]["mode"] == int(heater_mode)
 
 
 async def test_set_temperature(
@@ -165,26 +173,30 @@ async def test_set_temperature(
     )
     await hass.async_block_till_done()
 
-    heater_mock.set_target_temperature.side_effect = EheimDigitalClientError
+    heater_mock.hub.send_packet.side_effect = EheimDigitalClientError
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
             CLIMATE_DOMAIN,
             SERVICE_SET_TEMPERATURE,
-            {ATTR_ENTITY_ID: "climate.mock_heater", ATTR_TEMPERATURE: 26.0},
+            {
+                ATTR_ENTITY_ID: "climate.mock_aquarium_mock_heater",
+                ATTR_TEMPERATURE: 26.0,
+            },
             blocking=True,
         )
 
-    heater_mock.set_target_temperature.side_effect = None
+    heater_mock.hub.send_packet.side_effect = None
 
     await hass.services.async_call(
         CLIMATE_DOMAIN,
         SERVICE_SET_TEMPERATURE,
-        {ATTR_ENTITY_ID: "climate.mock_heater", ATTR_TEMPERATURE: 26.0},
+        {ATTR_ENTITY_ID: "climate.mock_aquarium_mock_heater", ATTR_TEMPERATURE: 26.0},
         blocking=True,
     )
 
-    heater_mock.set_target_temperature.assert_awaited_with(26.0)
+    calls = [call for call in heater_mock.hub.mock_calls if call[0] == "send_packet"]
+    assert len(calls) == 2 and calls[1][1][0]["sollTemp"] == 260
 
 
 @pytest.mark.parametrize(
@@ -206,38 +218,45 @@ async def test_set_hvac_mode(
     )
     await hass.async_block_till_done()
 
-    heater_mock.set_active.side_effect = EheimDigitalClientError
+    heater_mock.hub.send_packet.side_effect = EheimDigitalClientError
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
             CLIMATE_DOMAIN,
             SERVICE_SET_HVAC_MODE,
-            {ATTR_ENTITY_ID: "climate.mock_heater", ATTR_HVAC_MODE: hvac_mode},
+            {
+                ATTR_ENTITY_ID: "climate.mock_aquarium_mock_heater",
+                ATTR_HVAC_MODE: hvac_mode,
+            },
             blocking=True,
         )
 
-    heater_mock.set_active.side_effect = None
+    heater_mock.hub.send_packet.side_effect = None
 
     await hass.services.async_call(
         CLIMATE_DOMAIN,
         SERVICE_SET_HVAC_MODE,
-        {ATTR_ENTITY_ID: "climate.mock_heater", ATTR_HVAC_MODE: hvac_mode},
+        {
+            ATTR_ENTITY_ID: "climate.mock_aquarium_mock_heater",
+            ATTR_HVAC_MODE: hvac_mode,
+        },
         blocking=True,
     )
 
-    heater_mock.set_active.assert_awaited_with(active=active)
+    calls = [call for call in heater_mock.hub.mock_calls if call[0] == "send_packet"]
+    assert len(calls) == 2 and calls[1][1][0]["active"] == int(active)
 
 
 async def test_state_update(
     hass: HomeAssistant,
     eheimdigital_hub_mock: MagicMock,
     mock_config_entry: MockConfigEntry,
-    heater_mock: MagicMock,
+    heater_mock: EheimDigitalHeater,
 ) -> None:
     """Test the climate state update."""
-    heater_mock.temperature_unit = HeaterUnit.FAHRENHEIT
-    heater_mock.is_heating = False
-    heater_mock.operation_mode = HeaterMode.BIO
+    heater_mock.heater_data["mUnit"] = int(HeaterUnit.FAHRENHEIT)
+    heater_mock.heater_data["isHeating"] = int(False)
+    heater_mock.heater_data["mode"] = int(HeaterMode.BIO)
 
     await init_integration(hass, mock_config_entry)
 
@@ -246,16 +265,16 @@ async def test_state_update(
     )
     await hass.async_block_till_done()
 
-    assert (state := hass.states.get("climate.mock_heater"))
+    assert (state := hass.states.get("climate.mock_aquarium_mock_heater"))
 
     assert state.attributes["hvac_action"] == HVACAction.IDLE
     assert state.attributes["preset_mode"] == HEATER_BIO_MODE
 
-    heater_mock.is_active = False
-    heater_mock.operation_mode = HeaterMode.SMART
+    heater_mock.heater_data["active"] = int(False)
+    heater_mock.heater_data["mode"] = int(HeaterMode.SMART)
 
     await eheimdigital_hub_mock.call_args.kwargs["receive_callback"]()
 
-    assert (state := hass.states.get("climate.mock_heater"))
+    assert (state := hass.states.get("climate.mock_aquarium_mock_heater"))
     assert state.state == HVACMode.OFF
     assert state.attributes["preset_mode"] == HEATER_SMART_MODE

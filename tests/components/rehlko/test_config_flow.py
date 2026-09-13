@@ -19,7 +19,7 @@ from tests.common import MockConfigEntry
 DHCP_DISCOVERY = DhcpServiceInfo(
     ip="1.1.1.1",
     hostname="KohlerGen",
-    macaddress="00146FAABBCC",
+    macaddress="00146faabbcc",
 )
 
 
@@ -151,11 +151,9 @@ async def test_reauth(
     assert mock_setup_entry.call_count == 1
 
 
+@pytest.mark.usefixtures("mock_setup_entry")
 async def test_reauth_exception(
-    hass: HomeAssistant,
-    rehlko_config_entry: MockConfigEntry,
-    mock_rehlko: AsyncMock,
-    mock_setup_entry: AsyncMock,
+    hass: HomeAssistant, rehlko_config_entry: MockConfigEntry, mock_rehlko: AsyncMock
 ) -> None:
     """Test reauth flow."""
     rehlko_config_entry.add_to_hass(hass)
@@ -185,9 +183,8 @@ async def test_reauth_exception(
     assert result["reason"] == "reauth_successful"
 
 
-async def test_dhcp_discovery(
-    hass: HomeAssistant, mock_rehlko: AsyncMock, mock_setup_entry: AsyncMock
-) -> None:
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_dhcp_discovery(hass: HomeAssistant, mock_rehlko: AsyncMock) -> None:
     """Test we can setup from dhcp discovery."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_DHCP}, data=DHCP_DISCOVERY

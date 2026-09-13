@@ -33,7 +33,7 @@ async def test_full_flow(
 ) -> None:
     """Check full flow."""
     result = await hass.config_entries.flow.async_init(
-        "youtube", context={"source": config_entries.SOURCE_USER}
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     state = config_entry_oauth2_flow._encode_jwt(
         hass,
@@ -61,7 +61,7 @@ async def test_full_flow(
         ) as mock_setup,
         patch(
             "homeassistant.components.youtube.config_flow.YouTube",
-            return_value=MockYouTube(),
+            return_value=MockYouTube(hass),
         ),
     ):
         result = await hass.config_entries.flow.async_configure(result["flow_id"])
@@ -92,7 +92,7 @@ async def test_flow_abort_without_channel(
 ) -> None:
     """Check abort flow if user has no channel."""
     result = await hass.config_entries.flow.async_init(
-        "youtube", context={"source": config_entries.SOURCE_USER}
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     state = config_entry_oauth2_flow._encode_jwt(
         hass,
@@ -114,7 +114,7 @@ async def test_flow_abort_without_channel(
     assert resp.status == 200
     assert resp.headers["content-type"] == "text/html; charset=utf-8"
 
-    service = MockYouTube(channel_fixture="youtube/get_no_channel.json")
+    service = MockYouTube(hass, channel_fixture="get_no_channel.json")
     with (
         patch("homeassistant.components.youtube.async_setup_entry", return_value=True),
         patch(
@@ -133,7 +133,7 @@ async def test_flow_abort_without_subscriptions(
 ) -> None:
     """Check abort flow if user has no subscriptions and no own channel."""
     result = await hass.config_entries.flow.async_init(
-        "youtube", context={"source": config_entries.SOURCE_USER}
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     state = config_entry_oauth2_flow._encode_jwt(
         hass,
@@ -156,8 +156,9 @@ async def test_flow_abort_without_subscriptions(
     assert resp.headers["content-type"] == "text/html; charset=utf-8"
 
     service = MockYouTube(
-        channel_fixture="youtube/get_no_channel.json",
-        subscriptions_fixture="youtube/get_no_subscriptions.json",
+        hass,
+        channel_fixture="get_no_channel.json",
+        subscriptions_fixture="get_no_subscriptions.json",
     )
     with (
         patch("homeassistant.components.youtube.async_setup_entry", return_value=True),
@@ -175,9 +176,9 @@ async def test_flow_without_subscriptions(
     hass: HomeAssistant,
     hass_client_no_auth: ClientSessionGenerator,
 ) -> None:
-    """Check flow continues even without subscriptions since user has their own channel."""
+    """Check flow continues without subscriptions using own channel."""
     result = await hass.config_entries.flow.async_init(
-        "youtube", context={"source": config_entries.SOURCE_USER}
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     state = config_entry_oauth2_flow._encode_jwt(
         hass,
@@ -199,7 +200,7 @@ async def test_flow_without_subscriptions(
     assert resp.status == 200
     assert resp.headers["content-type"] == "text/html; charset=utf-8"
 
-    service = MockYouTube(subscriptions_fixture="youtube/get_no_subscriptions.json")
+    service = MockYouTube(hass, subscriptions_fixture="get_no_subscriptions.json")
     with (
         patch("homeassistant.components.youtube.async_setup_entry", return_value=True),
         patch(
@@ -240,7 +241,7 @@ async def test_flow_http_error(
 ) -> None:
     """Check full flow."""
     result = await hass.config_entries.flow.async_init(
-        "youtube", context={"source": config_entries.SOURCE_USER}
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     state = config_entry_oauth2_flow._encode_jwt(
         hass,
@@ -265,14 +266,26 @@ async def test_flow_http_error(
     with patch(
         "homeassistant.components.youtube.config_flow.YouTube.get_user_channels",
         side_effect=ForbiddenError(
-            "YouTube Data API v3 has not been used in project 0 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/youtube.googleapis.com/overview?project=0 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry."
+            "YouTube Data API v3 has not been used in project 0"
+            " before or it is disabled. Enable it by visiting"
+            " https://console.developers.google.com/apis/api/"
+            "youtube.googleapis.com/overview?project=0 then"
+            " retry. If you enabled this API recently, wait a"
+            " few minutes for the action to propagate to our"
+            " systems and retry."
         ),
     ):
         result = await hass.config_entries.flow.async_configure(result["flow_id"])
         assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "access_not_configured"
         assert result["description_placeholders"]["message"] == (
-            "YouTube Data API v3 has not been used in project 0 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/youtube.googleapis.com/overview?project=0 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry."
+            "YouTube Data API v3 has not been used in project 0"
+            " before or it is disabled. Enable it by visiting"
+            " https://console.developers.google.com/apis/api/"
+            "youtube.googleapis.com/overview?project=0 then"
+            " retry. If you enabled this API recently, wait a"
+            " few minutes for the action to propagate to our"
+            " systems and retry."
         )
 
 
@@ -352,7 +365,7 @@ async def test_reauth(
         },
     )
 
-    youtube = MockYouTube(channel_fixture=f"youtube/{fixture}.json")
+    youtube = MockYouTube(hass, channel_fixture=f"{fixture}.json")
     with (
         patch(
             "homeassistant.components.youtube.async_setup_entry", return_value=True
@@ -385,7 +398,7 @@ async def test_flow_exception(
 ) -> None:
     """Check full flow."""
     result = await hass.config_entries.flow.async_init(
-        "youtube", context={"source": config_entries.SOURCE_USER}
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     state = config_entry_oauth2_flow._encode_jwt(
         hass,
@@ -422,7 +435,7 @@ async def test_options_flow(
     await setup_integration()
     with patch(
         "homeassistant.components.youtube.config_flow.YouTube",
-        return_value=MockYouTube(),
+        return_value=MockYouTube(hass),
     ):
         entry = hass.config_entries.async_entries(DOMAIN)[0]
         result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -446,9 +459,9 @@ async def test_own_channel_included(
     hass: HomeAssistant,
     hass_client_no_auth: ClientSessionGenerator,
 ) -> None:
-    """Test that the user's own channel is included in the list of selectable channels."""
+    """Test user's own channel is included in selectable channels."""
     result = await hass.config_entries.flow.async_init(
-        "youtube", context={"source": config_entries.SOURCE_USER}
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     state = config_entry_oauth2_flow._encode_jwt(
         hass,
@@ -476,7 +489,7 @@ async def test_own_channel_included(
         ) as mock_setup,
         patch(
             "homeassistant.components.youtube.config_flow.YouTube",
-            return_value=MockYouTube(),
+            return_value=MockYouTube(hass),
         ),
     ):
         result = await hass.config_entries.flow.async_configure(result["flow_id"])
@@ -522,7 +535,7 @@ async def test_options_flow_own_channel(
     await setup_integration()
     with patch(
         "homeassistant.components.youtube.config_flow.YouTube",
-        return_value=MockYouTube(),
+        return_value=MockYouTube(hass),
     ):
         entry = hass.config_entries.async_entries(DOMAIN)[0]
         result = await hass.config_entries.options.async_init(entry.entry_id)

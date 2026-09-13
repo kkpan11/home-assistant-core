@@ -1,37 +1,23 @@
 """Get ride details and liveboard details for NMBS (Belgian railway)."""
 
-from __future__ import annotations
-
 from datetime import datetime
 import logging
-from typing import Any
+from typing import Any, override
 
 from pyrail import iRail
 from pyrail.models import ConnectionDetails, LiveboardDeparture, StationDetails
-import voluptuous as vol
 
-from homeassistant.components.sensor import (
-    PLATFORM_SCHEMA as SENSOR_PLATFORM_SCHEMA,
-    SensorEntity,
-)
-from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.components.sensor import SensorEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    ATTR_LATITUDE,
-    ATTR_LONGITUDE,
     CONF_NAME,
-    CONF_PLATFORM,
     CONF_SHOW_ON_MAP,
+    EntityStateAttribute,
     UnitOfTime,
 )
-from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN, HomeAssistant
-from homeassistant.helpers import config_validation as cv
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity_platform import (
-    AddConfigEntryEntitiesCallback,
-    AddEntitiesCallback,
-)
-from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .const import (  # noqa: F401
@@ -47,21 +33,8 @@ from .const import (  # noqa: F401
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_NAME = "NMBS"
-
 DEFAULT_ICON = "mdi:train"
 DEFAULT_ICON_ALERT = "mdi:alert-octagon"
-
-PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_STATION_FROM): cv.string,
-        vol.Required(CONF_STATION_TO): cv.string,
-        vol.Optional(CONF_STATION_LIVE): cv.string,
-        vol.Optional(CONF_EXCLUDE_VIAS, default=False): cv.boolean,
-        vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
-        vol.Optional(CONF_SHOW_ON_MAP, default=False): cv.boolean,
-    }
-)
 
 
 def get_time_until(departure_time: datetime | None = None):
@@ -81,73 +54,8 @@ def get_delay_in_minutes(delay=0):
 def get_ride_duration(departure_time: datetime, arrival_time: datetime, delay=0):
     """Calculate the total travel time in minutes."""
     duration = arrival_time - departure_time
-    duration_time = int(round(duration.total_seconds() / 60))
+    duration_time = round(duration.total_seconds() / 60)
     return duration_time + get_delay_in_minutes(delay)
-
-
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> None:
-    """Set up the NMBS sensor with iRail API."""
-
-    if config[CONF_PLATFORM] == DOMAIN:
-        if CONF_SHOW_ON_MAP not in config:
-            config[CONF_SHOW_ON_MAP] = False
-        if CONF_EXCLUDE_VIAS not in config:
-            config[CONF_EXCLUDE_VIAS] = False
-
-        station_types = [CONF_STATION_FROM, CONF_STATION_TO, CONF_STATION_LIVE]
-
-        for station_type in station_types:
-            station = (
-                find_station_by_name(hass, config[station_type])
-                if station_type in config
-                else None
-            )
-            if station is None and station_type in config:
-                async_create_issue(
-                    hass,
-                    DOMAIN,
-                    "deprecated_yaml_import_issue_station_not_found",
-                    breaks_in_ha_version="2025.7.0",
-                    is_fixable=False,
-                    issue_domain=DOMAIN,
-                    severity=IssueSeverity.WARNING,
-                    translation_key="deprecated_yaml_import_issue_station_not_found",
-                    translation_placeholders={
-                        "domain": DOMAIN,
-                        "integration_title": "NMBS",
-                        "station_name": config[station_type],
-                        "url": "/config/integrations/dashboard/add?domain=nmbs",
-                    },
-                )
-                return
-
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": SOURCE_IMPORT},
-                data=config,
-            )
-        )
-
-    async_create_issue(
-        hass,
-        HOMEASSISTANT_DOMAIN,
-        f"deprecated_yaml_{DOMAIN}",
-        breaks_in_ha_version="2025.7.0",
-        is_fixable=False,
-        issue_domain=DOMAIN,
-        severity=IssueSeverity.WARNING,
-        translation_key="deprecated_yaml",
-        translation_placeholders={
-            "domain": DOMAIN,
-            "integration_title": "NMBS",
-        },
-    )
 
 
 async def async_setup_entry(
@@ -207,19 +115,22 @@ class NMBSLiveBoard(SensorEntity):
         self.entity_registry_enabled_default = False
 
     @property
+    @override
     def name(self) -> str:
         """Return the sensor default name."""
         return f"Trains in {self._station.standard_name}"
 
     @property
+    @override
     def unique_id(self) -> str:
         """Return the unique ID."""
 
         unique_id = f"{self._station.id}_{self._station_from.id}_{self._station_to.id}"
         vias = "_excl_vias" if self._excl_vias else ""
-        return f"nmbs_live_{unique_id}{vias}"
+        return f"nmbs_live_{unique_id}{vias}"  # pylint: disable=home-assistant-entity-unique-id-redundant-domain
 
     @property
+    @override
     def icon(self) -> str:
         """Return the default icon or an alert icon if delays."""
         if self._attrs and int(self._attrs.delay) > 0:
@@ -228,11 +139,13 @@ class NMBSLiveBoard(SensorEntity):
         return DEFAULT_ICON
 
     @property
+    @override
     def native_value(self) -> str | None:
         """Return sensor state."""
         return self._state
 
     @property
+    @override
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the sensor attributes if data is available."""
         if self._state is None or not self._attrs:
@@ -304,21 +217,27 @@ class NMBSSensor(SensorEntity):
         self._state = None
 
     @property
+    @override
     def unique_id(self) -> str:
         """Return the unique ID."""
         unique_id = f"{self._station_from.id}_{self._station_to.id}"
 
         vias = "_excl_vias" if self._excl_vias else ""
-        return f"nmbs_connection_{unique_id}{vias}"
+        return f"nmbs_connection_{unique_id}{vias}"  # pylint: disable=home-assistant-entity-unique-id-redundant-domain
 
     @property
+    @override
     def name(self) -> str:
         """Return the name of the sensor."""
         if self._name is None:
-            return f"Train from {self._station_from.standard_name} to {self._station_to.standard_name}"
+            return (
+                f"Train from {self._station_from.standard_name}"
+                f" to {self._station_to.standard_name}"
+            )
         return self._name
 
     @property
+    @override
     def icon(self) -> str:
         """Return the sensor default icon or an alert icon if any delay."""
         if self._attrs:
@@ -329,6 +248,7 @@ class NMBSSensor(SensorEntity):
         return "mdi:train"
 
     @property
+    @override
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return sensor attributes if data is available."""
         if self._state is None or not self._attrs:
@@ -336,7 +256,6 @@ class NMBSSensor(SensorEntity):
 
         delay = get_delay_in_minutes(self._attrs.departure.delay)
         departure = get_time_until(self._attrs.departure.time)
-        canceled = self._attrs.departure.canceled
 
         attrs = {
             "destination": self._attrs.departure.station,
@@ -346,18 +265,17 @@ class NMBSSensor(SensorEntity):
             "vehicle_id": self._attrs.departure.vehicle,
         }
 
-        if not canceled:
-            attrs["departure"] = f"In {departure} minutes"
-            attrs["departure_minutes"] = departure
-            attrs["canceled"] = False
-        else:
+        attrs["canceled"] = self._attrs.departure.canceled
+        if attrs["canceled"]:
             attrs["departure"] = None
             attrs["departure_minutes"] = None
-            attrs["canceled"] = True
+        else:
+            attrs["departure"] = f"In {departure} minutes"
+            attrs["departure_minutes"] = departure
 
         if self._show_on_map and self.station_coordinates:
-            attrs[ATTR_LATITUDE] = self.station_coordinates[0]
-            attrs[ATTR_LONGITUDE] = self.station_coordinates[1]
+            attrs[EntityStateAttribute.LATITUDE] = self.station_coordinates[0]
+            attrs[EntityStateAttribute.LONGITUDE] = self.station_coordinates[1]
 
         if self.is_via_connection and not self._excl_vias:
             via = self._attrs.vias[0]
@@ -369,13 +287,13 @@ class NMBSSensor(SensorEntity):
                 via.timebetween
             ) + get_delay_in_minutes(via.departure.delay)
 
-        if delay > 0:
-            attrs["delay"] = f"{delay} minutes"
-            attrs["delay_minutes"] = delay
+        attrs["delay"] = f"{delay} minutes"
+        attrs["delay_minutes"] = delay
 
         return attrs
 
     @property
+    @override
     def native_value(self) -> int | None:
         """Return the state of the device."""
         return self._state

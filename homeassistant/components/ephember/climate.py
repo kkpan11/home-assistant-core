@@ -1,17 +1,15 @@
 """Support for the EPH Controls Ember themostats."""
 
-from __future__ import annotations
-
 from datetime import timedelta
+from enum import IntEnum
 import logging
-from typing import Any
+from typing import Any, override
 
 from pyephember2.pyephember2 import (
     EphEmber,
     ZoneMode,
+    boiler_state,
     zone_current_temperature,
-    zone_is_active,
-    zone_is_boost_active,
     zone_is_hotwater,
     zone_mode,
     zone_name,
@@ -53,6 +51,15 @@ EPH_TO_HA_STATE = {
     "ON": HVACMode.HEAT,
     "OFF": HVACMode.OFF,
 }
+
+
+class EPHBoilerStates(IntEnum):
+    """Boiler states for a zone given by the api."""
+
+    FIXME = 0
+    OFF = 1
+    ON = 2
+
 
 HA_STATE_TO_EPH = {value: key for key, value in EPH_TO_HA_STATE.items()}
 
@@ -102,7 +109,6 @@ class EphEmberThermostat(ClimateEntity):
         self._attr_name = self._zone_name
 
         if self._hot_water:
-            self._attr_supported_features = ClimateEntityFeature.AUX_HEAT
             self._attr_target_temperature_step = None
         else:
             self._attr_target_temperature_step = 0.5
@@ -113,29 +119,34 @@ class EphEmberThermostat(ClimateEntity):
             )
 
     @property
+    @override
     def current_temperature(self) -> float | None:
         """Return the current temperature."""
         return zone_current_temperature(self._zone)
 
     @property
+    @override
     def target_temperature(self) -> float | None:
         """Return the temperature we try to reach."""
         return zone_target_temperature(self._zone)
 
     @property
+    @override
     def hvac_action(self) -> HVACAction:
         """Return current HVAC action."""
-        if zone_is_active(self._zone):
+        if boiler_state(self._zone) == EPHBoilerStates.ON:
             return HVACAction.HEATING
 
         return HVACAction.IDLE
 
     @property
+    @override
     def hvac_mode(self) -> HVACMode:
         """Return current operation ie. heat, cool, idle."""
         mode = zone_mode(self._zone)
         return self.map_mode_eph_hass(mode)
 
+    @override
     def set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set the operation mode."""
         mode = self.map_mode_hass_eph(hvac_mode)
@@ -144,22 +155,7 @@ class EphEmberThermostat(ClimateEntity):
         else:
             _LOGGER.error("Invalid operation mode provided %s", hvac_mode)
 
-    @property
-    def is_aux_heat(self) -> bool:
-        """Return true if aux heater."""
-
-        return zone_is_boost_active(self._zone)
-
-    def turn_aux_heat_on(self) -> None:
-        """Turn auxiliary heater on."""
-        self._ember.activate_boost_by_name(
-            self._zone_name, zone_target_temperature(self._zone)
-        )
-
-    def turn_aux_heat_off(self) -> None:
-        """Turn auxiliary heater off."""
-        self._ember.deactivate_boost_by_name(self._zone_name)
-
+    @override
     def set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
@@ -177,7 +173,8 @@ class EphEmberThermostat(ClimateEntity):
         self._ember.set_zone_target_temperature(self._zone["zoneid"], temperature)
 
     @property
-    def min_temp(self):
+    @override
+    def min_temp(self) -> float:
         """Return the minimum temperature."""
         # Hot water temp doesn't support being changed
         if self._hot_water:
@@ -186,7 +183,8 @@ class EphEmberThermostat(ClimateEntity):
         return 5.0
 
     @property
-    def max_temp(self):
+    @override
+    def max_temp(self) -> float:
         """Return the maximum temperature."""
         if self._hot_water:
             return zone_target_temperature(self._zone)
@@ -206,4 +204,6 @@ class EphEmberThermostat(ClimateEntity):
     @staticmethod
     def map_mode_eph_hass(operation_mode):
         """Map from eph mode to Home Assistant mode."""
+        if operation_mode is None:
+            return HVACMode.HEAT_COOL
         return EPH_TO_HA_STATE.get(operation_mode.name, HVACMode.HEAT_COOL)

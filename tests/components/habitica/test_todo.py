@@ -37,7 +37,7 @@ from .conftest import ERROR_NOT_FOUND, ERROR_TOO_MANY_REQUESTS
 from tests.common import (
     MockConfigEntry,
     async_get_persistent_notifications,
-    load_fixture,
+    async_load_fixture,
     snapshot_platform,
 )
 from tests.typing import WebSocketGenerator
@@ -194,7 +194,8 @@ async def test_uncomplete_todo_item(
     [
         (
             ERROR_NOT_FOUND,
-            r"Unable to update the score for your Habitica to-do `.+`, please try again",
+            r"Unable to update the score for your Habitica"
+            r" to-do `.+`, please try again",
             ServiceValidationError,
         ),
         (
@@ -451,7 +452,8 @@ async def test_add_todo_item_exception(
     habitica.create_task.side_effect = exception
     with pytest.raises(
         expected_exception=expected_exception,
-        # match="Unable to create new to-do `test-summary` for Habitica, please try again",
+        # match="Unable to create new to-do `test-summary`
+        # for Habitica, please try again",
         match=exc_msg,
     ):
         await hass.services.async_call(
@@ -567,7 +569,8 @@ async def test_delete_completed_todo_items(
     [
         (
             ERROR_NOT_FOUND,
-            "Unable to delete completed to-do items from Habitica to-do list, please try again",
+            "Unable to delete completed to-do items from"
+            " Habitica to-do list, please try again",
             ServiceValidationError,
         ),
         (
@@ -642,7 +645,7 @@ async def test_move_todo_item(
 ) -> None:
     """Test move todo items."""
     reorder_response = HabiticaTaskOrderResponse.from_json(
-        load_fixture(fixture, DOMAIN)
+        await async_load_fixture(hass, fixture, DOMAIN)
     )
     habitica.reorder_task.return_value = reorder_response
     config_entry.add_to_hass(hass)
@@ -788,7 +791,9 @@ async def test_next_due_date(
     dailies_entity = "todo.test_user_dailies"
 
     habitica.get_tasks.side_effect = [
-        HabiticaTasksResponse.from_json(load_fixture(fixture, DOMAIN)),
+        HabiticaTasksResponse.from_json(
+            await async_load_fixture(hass, fixture, DOMAIN)
+        ),
         HabiticaTasksResponse.from_dict({"success": True, "data": []}),
     ]
 

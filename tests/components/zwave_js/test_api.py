@@ -1,5 +1,7 @@
 """Test the Z-Wave JS Websocket API."""
 
+import asyncio
+from collections.abc import Callable, Coroutine
 from copy import deepcopy
 from http import HTTPStatus
 from io import BytesIO
@@ -32,7 +34,7 @@ from zwave_js_server.model.controller import (
     ProvisioningEntry,
     QRProvisioningInformation,
 )
-from zwave_js_server.model.controller.firmware import ControllerFirmwareUpdateData
+from zwave_js_server.model.driver.firmware import DriverFirmwareUpdateData
 from zwave_js_server.model.node import Node
 from zwave_js_server.model.node.firmware import NodeFirmwareUpdateData
 from zwave_js_server.model.value import ConfigurationValue, get_value_id_str
@@ -93,16 +95,18 @@ from homeassistant.components.zwave_js.const import (
     ATTR_PARAMETERS,
     ATTR_WAIT_FOR_RESULT,
     CONF_DATA_COLLECTION_OPTED_IN,
-    CONF_INSTALLER_MODE,
     DOMAIN,
 )
 from homeassistant.components.zwave_js.helpers import get_device_id
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
-from homeassistant.setup import async_setup_component
 
 from tests.common import MockConfigEntry, MockUser
-from tests.typing import ClientSessionGenerator, WebSocketGenerator
+from tests.typing import (
+    ClientSessionGenerator,
+    MockHAClientWebSocket,
+    WebSocketGenerator,
+)
 
 CONTROLLER_PATCH_PREFIX = "zwave_js_server.model.controller.Controller"
 
@@ -117,7 +121,9 @@ def get_device(hass: HomeAssistant, node):
     """Get device ID for a node."""
     dev_reg = dr.async_get(hass)
     device_id = get_device_id(node.client.driver, node)
-    return dev_reg.async_get_device(identifiers={device_id})
+    return dev_reg.async_get_device_by_identifier(
+        device_id, hass.config_entries.async_entries(DOMAIN)[0].entry_id
+    )
 
 
 async def test_no_driver(
@@ -181,8 +187,8 @@ async def test_network_status(
     assert result["controller"]["supports_long_range"]
 
     # Try API call with device ID
-    device = device_registry.async_get_device(
-        identifiers={(DOMAIN, "3245146787-52")},
+    device = device_registry.async_get_device_by_identifier(
+        (DOMAIN, "3245146787-52"), entry.entry_id
     )
     assert device
     with patch(
@@ -400,6 +406,478 @@ async def test_node_status(
     assert msg["error"]["code"] == ERR_NOT_LOADED
 
 
+def mock_neighbors_commands(
+    client: MagicMock,
+    handler: Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Record the commands sent to the driver and answer them with handler."""
+    commands: list[dict[str, Any]] = []
+
+    async def _send_command(message: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        commands.append(message)
+        return await handler(message)
+
+    client.async_send_command.side_effect = _send_command
+    return commands
+
+
+async def neighbors_ok(message: dict[str, Any]) -> dict[str, Any]:
+    """Answer both toggling RF and reading neighbors successfully."""
+    if message["command"] == "controller.get_node_neighbors":
+        return {"neighbors": []}
+    return {"success": True}
+
+
+async def test_network_neighbors(
+    hass: HomeAssistant,
+    multisensor_6: Node,
+    wallmote_central_scene: Node,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test the network_neighbors websocket command."""
+    ws_client = await hass_ws_client(hass)
+    # Long range nodes are not part of the mesh and must be skipped
+    wallmote_central_scene.data["protocol"] = Protocols.ZWAVE_LONG_RANGE
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] == "controller.get_node_neighbors":
+            neighbors = [35, 32] if message["nodeId"] == multisensor_6.node_id else []
+            return {"neighbors": neighbors}
+        return {"success": True}
+
+    commands = mock_neighbors_commands(client, handler)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert msg["success"]
+    assert msg["result"] == {
+        "1": [],
+        str(multisensor_6.node_id): [35, 32],
+    }
+    # The nodes are read one at a time while the radio is off
+    assert commands == [
+        {"command": "controller.toggle_rf", "enabled": False},
+        {"command": "controller.get_node_neighbors", "nodeId": 1},
+        {"command": "controller.get_node_neighbors", "nodeId": multisensor_6.node_id},
+        {"command": "controller.toggle_rf", "enabled": True},
+    ]
+
+
+async def test_network_neighbors_node_failure(
+    hass: HomeAssistant,
+    multisensor_6: Node,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test a node that fails to report its neighbors is skipped."""
+    ws_client = await hass_ws_client(hass)
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] != "controller.get_node_neighbors":
+            return {"success": True}
+        if message["nodeId"] == 1:
+            raise FailedZWaveCommand("failed_command", 1, "error message")
+        return {"neighbors": []}
+
+    commands = mock_neighbors_commands(client, handler)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert msg["success"]
+    assert msg["result"] == {str(multisensor_6.node_id): []}
+    assert commands[-1] == {"command": "controller.toggle_rf", "enabled": True}
+
+
+async def test_network_neighbors_node_added_while_reading(
+    hass: HomeAssistant,
+    multisensor_6: Node,
+    wallmote_central_scene: Node,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test a node joining the network while reading doesn't abort the reads."""
+    ws_client = await hass_ws_client(hass)
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] == "controller.get_node_neighbors":
+            client.driver.controller.nodes.setdefault(999, wallmote_central_scene)
+            return {"neighbors": []}
+        return {"success": True}
+
+    commands = mock_neighbors_commands(client, handler)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert msg["success"]
+    assert msg["result"] == {
+        "1": [],
+        str(multisensor_6.node_id): [],
+        str(wallmote_central_scene.node_id): [],
+    }
+    assert commands[-1] == {"command": "controller.toggle_rf", "enabled": True}
+
+
+async def test_network_neighbors_rf_disable_rejected(
+    hass: HomeAssistant,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test the nodes are not read when the radio can't be turned off."""
+    ws_client = await hass_ws_client(hass)
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] == "controller.toggle_rf":
+            return {"success": message["enabled"]}
+        return {"neighbors": []}
+
+    commands = mock_neighbors_commands(client, handler)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert not msg["success"]
+    assert msg["error"]["code"] == "rf_toggle_failed"
+    assert commands == [
+        {"command": "controller.toggle_rf", "enabled": False},
+        {"command": "controller.toggle_rf", "enabled": True},
+    ]
+
+
+async def test_network_neighbors_rf_restore_rejected(
+    hass: HomeAssistant,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a radio that can't be turned back on is reported and logged."""
+    ws_client = await hass_ws_client(hass)
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] == "controller.toggle_rf":
+            return {"success": not message["enabled"]}
+        return {"neighbors": []}
+
+    commands = mock_neighbors_commands(client, handler)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert not msg["success"]
+    assert msg["error"]["code"] == "rf_toggle_failed"
+    assert commands[-1] == {"command": "controller.toggle_rf", "enabled": True}
+    assert "Failed to re-enable RF" in caplog.text
+
+
+async def test_network_neighbors_rf_toggle_error(
+    hass: HomeAssistant,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a single response is sent when the radio can't be toggled at all."""
+    ws_client = await hass_ws_client(hass)
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["enabled"]:
+            raise FailedZWaveCommand("failed_command", 1, "error message")
+        return {"success": False}
+
+    mock_neighbors_commands(client, handler)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert not msg["success"]
+    assert msg["error"]["code"] == "rf_toggle_failed"
+    assert "Failed to re-enable RF" in caplog.text
+
+    # The next frame is the pong, proving no second response was sent
+    await ws_client.send_json_auto_id({TYPE: "ping"})
+    msg = await ws_client.receive_json()
+    assert msg["type"] == "pong"
+
+
+async def test_network_neighbors_cancelled(
+    hass: HomeAssistant,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test the radio is turned back on when the command is cancelled."""
+    ws_client = await hass_ws_client(hass)
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] == "controller.toggle_rf" and not message["enabled"]:
+            raise asyncio.CancelledError
+        return {"success": True}
+
+    commands = mock_neighbors_commands(client, handler)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    # A cancelled command sends no response, so sync on a ping instead
+    await ws_client.send_json_auto_id({TYPE: "ping"})
+    msg = await ws_client.receive_json()
+    assert msg["type"] == "pong"
+    await hass.async_block_till_done()
+
+    assert commands == [
+        {"command": "controller.toggle_rf", "enabled": False},
+        {"command": "controller.toggle_rf", "enabled": True},
+    ]
+
+
+async def test_network_neighbors_handler_cancelled(
+    hass: HomeAssistant,
+    multisensor_6: Node,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test an abandoned request doesn't interrupt the refresh.
+
+    The refresh must keep the lock and turn the radio back on even when the
+    websocket command handler is cancelled, e.g. by a closing connection.
+    """
+    ws_client = await hass_ws_client(hass)
+    read_started = asyncio.Event()
+    resume_read = asyncio.Event()
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] == "controller.get_node_neighbors":
+            read_started.set()
+            await resume_read.wait()
+            return {"neighbors": []}
+        return {"success": True}
+
+    commands = mock_neighbors_commands(client, handler)
+    lock = integration.runtime_data.network_neighbors_lock
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    await read_started.wait()
+
+    handler_task = next(
+        task
+        for task in asyncio.all_tasks()
+        if "_handle_async_response" in repr(task.get_coro())
+    )
+    handler_task.cancel()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    # The abandoned refresh keeps reading with the lock held
+    assert lock.locked()
+
+    resume_read.set()
+    await hass.async_block_till_done()
+    assert not lock.locked()
+    assert commands == [
+        {"command": "controller.toggle_rf", "enabled": False},
+        {"command": "controller.get_node_neighbors", "nodeId": 1},
+        {"command": "controller.get_node_neighbors", "nodeId": multisensor_6.node_id},
+        {"command": "controller.toggle_rf", "enabled": True},
+    ]
+
+
+async def test_network_neighbors_concurrent(
+    hass: HomeAssistant,
+    multisensor_6: Node,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test concurrent requests are serialized so the radio is never shared."""
+    ws_client = await hass_ws_client(hass)
+    ws_client_2 = await hass_ws_client(hass)
+    read_started = asyncio.Event()
+    resume_read = asyncio.Event()
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] == "controller.get_node_neighbors":
+            read_started.set()
+            await resume_read.wait()
+            return {"neighbors": []}
+        return {"success": True}
+
+    commands = mock_neighbors_commands(client, handler)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    await read_started.wait()
+
+    await ws_client_2.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    await ws_client_2.send_json_auto_id({TYPE: "ping"})
+    msg = await ws_client_2.receive_json()
+    assert msg["type"] == "pong"
+    # The second request must not have touched the radio yet
+    assert commands == [
+        {"command": "controller.toggle_rf", "enabled": False},
+        {"command": "controller.get_node_neighbors", "nodeId": 1},
+    ]
+
+    resume_read.set()
+    msg = await ws_client.receive_json()
+    assert msg["success"]
+    msg = await ws_client_2.receive_json()
+    assert msg["success"]
+    # The second request turns the radio off only after the first turned it on
+    assert commands == [
+        {"command": "controller.toggle_rf", "enabled": False},
+        {"command": "controller.get_node_neighbors", "nodeId": 1},
+        {"command": "controller.get_node_neighbors", "nodeId": multisensor_6.node_id},
+        {"command": "controller.toggle_rf", "enabled": True},
+        {"command": "controller.toggle_rf", "enabled": False},
+        {"command": "controller.get_node_neighbors", "nodeId": 1},
+        {"command": "controller.get_node_neighbors", "nodeId": multisensor_6.node_id},
+        {"command": "controller.toggle_rf", "enabled": True},
+    ]
+
+
+async def test_network_neighbors_unload_waits(
+    hass: HomeAssistant,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test unloading the entry waits for the radio to be turned back on."""
+    ws_client = await hass_ws_client(hass)
+    read_started = asyncio.Event()
+    resume_read = asyncio.Event()
+
+    async def handler(message: dict[str, Any]) -> dict[str, Any]:
+        if message["command"] == "controller.get_node_neighbors":
+            read_started.set()
+            await resume_read.wait()
+            return {"neighbors": []}
+        return {"success": True}
+
+    commands = mock_neighbors_commands(client, handler)
+
+    async def mock_disconnect() -> None:
+        commands.append({"command": "disconnect"})
+
+    client.disconnect.side_effect = mock_disconnect
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    await read_started.wait()
+
+    unload_task = hass.async_create_task(
+        hass.config_entries.async_unload(integration.entry_id)
+    )
+    for _ in range(10):
+        await asyncio.sleep(0)
+    # The refresh is holding the lock, so the client must still be connected
+    assert not unload_task.done()
+
+    resume_read.set()
+    msg = await ws_client.receive_json()
+    assert msg["success"]
+    assert await unload_task
+    # The radio was turned back on before the client disconnected
+    assert commands[-2:] == [
+        {"command": "controller.toggle_rf", "enabled": True},
+        {"command": "disconnect"},
+    ]
+
+
+async def test_network_neighbors_invalid_entry(
+    hass: HomeAssistant,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test the network_neighbors websocket command with an invalid entry."""
+    ws_client = await hass_ws_client(hass)
+    mock_neighbors_commands(client, neighbors_ok)
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: "fake_entry_id",
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert not msg["success"]
+    assert msg["error"]["code"] == ERR_NOT_FOUND
+
+    await hass.config_entries.async_unload(integration.entry_id)
+    await hass.async_block_till_done()
+
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/network_neighbors",
+            ENTRY_ID: integration.entry_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert not msg["success"]
+    assert msg["error"]["code"] == ERR_NOT_LOADED
+
+
 async def test_node_metadata(
     hass: HomeAssistant,
     wallmote_central_scene,
@@ -492,7 +970,9 @@ async def test_node_alerts(
     entry = integration
     ws_client = await hass_ws_client(hass)
 
-    device = device_registry.async_get_device(identifiers={(DOMAIN, "3245146787-35")})
+    device = device_registry.async_get_device_by_identifier(
+        (DOMAIN, "3245146787-35"), entry.entry_id
+    )
     assert device
 
     await ws_client.send_json_auto_id(
@@ -519,7 +999,10 @@ async def test_node_alerts(
         assert len(msg["result"]["comments"]) == 2
         assert msg["result"]["comments"][1] == {
             "level": "warning",
-            "text": "This device is currently being interviewed and may not be fully operational.",
+            "text": (
+                "This device is currently being interviewed"
+                " and may not be fully operational."
+            ),
         }
 
     # Test with provisioned device
@@ -565,7 +1048,10 @@ async def test_node_alerts(
         assert msg["result"]["comments"] == [
             {
                 "level": "info",
-                "text": "This device has been provisioned but is not yet included in the network.",
+                "text": (
+                    "This device has been provisioned but is"
+                    " not yet included in the network."
+                ),
             }
         ]
 
@@ -737,6 +1223,25 @@ async def test_add_node(
     msg = await ws_client.receive_json()
     assert msg["event"]["event"] == "interview stage completed"
     assert msg["event"]["stage"] == "NodeInfo"
+
+    event = Event(
+        type="interview progress",
+        data={
+            "source": "node",
+            "event": "interview progress",
+            "nodeId": 67,
+            "stage": "CommandClasses",
+            "progress": 42.5,
+            "endpoint": 0,
+            "commandClass": 112,
+        },
+    )
+    client.driver.receive_event(event)
+
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "interview progress"
+    assert msg["event"]["stage"] == "CommandClasses"
+    assert msg["event"]["progress"] == 42.5
 
     event = Event(
         type="interview completed",
@@ -1260,8 +1765,8 @@ async def test_provision_smart_start_node(
     assert msg["success"]
 
     # verify a device was created
-    device = device_registry.async_get_device(
-        identifiers={(DOMAIN, "provision_test")},
+    device = device_registry.async_get_device_by_identifier(
+        (DOMAIN, "provision_test"), entry.entry_id
     )
     assert device is not None
     assert device.name == "test_name"
@@ -1921,8 +2426,8 @@ async def test_remove_node(
     assert msg["event"]["event"] == "node removed"
 
     # Verify device was removed from device registry
-    device = device_registry.async_get_device(
-        identifiers={(DOMAIN, "3245146787-67")},
+    device = device_registry.async_get_device_by_identifier(
+        (DOMAIN, "3245146787-67"), entry.entry_id
     )
     assert device is None
 
@@ -2109,8 +2614,8 @@ async def test_replace_failed_node(
 
     # Verify device was removed from device registry
     assert (
-        device_registry.async_get_device(
-            identifiers={(DOMAIN, "3245146787-67")},
+        device_registry.async_get_device_by_identifier(
+            (DOMAIN, "3245146787-67"), entry.entry_id
         )
         is None
     )
@@ -2154,6 +2659,25 @@ async def test_replace_failed_node(
     msg = await ws_client.receive_json()
     assert msg["event"]["event"] == "interview stage completed"
     assert msg["event"]["stage"] == "NodeInfo"
+
+    event = Event(
+        type="interview progress",
+        data={
+            "source": "node",
+            "event": "interview progress",
+            "nodeId": 67,
+            "stage": "CommandClasses",
+            "progress": 42.5,
+            "endpoint": 0,
+            "commandClass": 112,
+        },
+    )
+    client.driver.receive_event(event)
+
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "interview progress"
+    assert msg["event"]["stage"] == "CommandClasses"
+    assert msg["event"]["progress"] == 42.5
 
     event = Event(
         type="interview completed",
@@ -2406,8 +2930,8 @@ async def test_remove_failed_node(
 
     # Verify device was removed from device registry
     assert (
-        device_registry.async_get_device(
-            identifiers={(DOMAIN, "3245146787-67")},
+        device_registry.async_get_device_by_identifier(
+            (DOMAIN, "3245146787-67"), entry.entry_id
         )
         is None
     )
@@ -2520,7 +3044,7 @@ async def test_subscribe_rebuild_routes_progress(
         {
             "source": "controller",
             "event": "rebuild routes progress",
-            "progress": {67: "pending"},
+            "progress": {"67": "pending"},
         },
     )
     client.driver.controller.receive_event(event)
@@ -2552,7 +3076,7 @@ async def test_subscribe_rebuild_routes_progress_initial_value(
     nortek_thermostat,
     hass_ws_client: WebSocketGenerator,
 ) -> None:
-    """Test subscribe_rebuild_routes_progress command when rebuild routes in progress."""
+    """Test subscribe_rebuild_routes_progress when in progress."""
     entry = integration
     ws_client = await hass_ws_client(hass)
 
@@ -2564,7 +3088,7 @@ async def test_subscribe_rebuild_routes_progress_initial_value(
         {
             "source": "controller",
             "event": "rebuild routes progress",
-            "progress": {67: "pending"},
+            "progress": {"67": "pending"},
         },
     )
     client.driver.controller.receive_event(event)
@@ -2579,7 +3103,11 @@ async def test_subscribe_rebuild_routes_progress_initial_value(
 
     msg = await ws_client.receive_json()
     assert msg["success"]
-    assert msg["result"] == {"67": "pending"}
+    assert msg["result"] is None
+
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "rebuild routes progress"
+    assert msg["event"]["rebuild_routes_status"] == {"67": "pending"}
 
 
 async def test_stop_rebuilding_routes(
@@ -2754,6 +3282,25 @@ async def test_refresh_node_info(
     msg = await ws_client.receive_json()
     assert msg["event"]["event"] == "interview stage completed"
     assert msg["event"]["stage"] == "NodeInfo"
+
+    event = Event(
+        type="interview progress",
+        data={
+            "source": "node",
+            "event": "interview progress",
+            "nodeId": 52,
+            "stage": "CommandClasses",
+            "progress": 42.5,
+            "endpoint": 0,
+            "commandClass": 112,
+        },
+    )
+    client.driver.receive_event(event)
+
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "interview progress"
+    assert msg["event"]["stage"] == "CommandClasses"
+    assert msg["event"]["progress"] == 42.5
 
     event = Event(
         type="interview completed",
@@ -3480,6 +4027,107 @@ async def test_get_raw_config_parameter(
     assert msg["error"]["code"] == ERR_NOT_LOADED
 
 
+async def test_subscribe_config_parameter_updates(
+    hass: HomeAssistant,
+    multisensor_6,
+    integration,
+    client,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test the subscribe_config_parameter_updates command."""
+    entry = integration
+    ws_client = await hass_ws_client(hass)
+    multisensor_6_device = get_device(hass, multisensor_6)
+
+    await ws_client.send_json(
+        {
+            ID: 1,
+            TYPE: "zwave_js/subscribe_config_parameter_updates",
+            DEVICE_ID: multisensor_6_device.id,
+        }
+    )
+
+    msg = await ws_client.receive_json()
+    assert msg["success"]
+    assert msg["result"] is None
+
+    # Fire value updated
+    event = Event(
+        "value updated",
+        {
+            "source": "node",
+            "event": "value updated",
+            "nodeId": multisensor_6.node_id,
+            "args": {
+                "commandClassName": "Configuration",
+                "commandClass": 112,
+                "endpoint": 0,
+                "property": 2,
+                "newValue": 1,
+                "prevValue": 0,
+                "propertyName": "Stay Awake in Battery Mode",
+            },
+        },
+    )
+    client.driver.controller.receive_event(event)
+    msg = await ws_client.receive_json()
+    # The initial state is no longer right since a config parameter has been updated
+    assert msg["event"] == {"id": "52-112-0-2", "value": 1}
+
+    # Validate that a non config parameter value update does not trigger an event
+    event = Event(
+        "value updated",
+        {
+            "source": "node",
+            "event": "value updated",
+            "nodeId": multisensor_6.node_id,
+            "args": {
+                "commandClassName": "Multilevel Sensor",
+                "commandClass": 49,
+                "endpoint": 0,
+                "property": "Air temperature",
+                "newValue": 68,
+                "prevValue": 9,
+                "propertyName": "Air temperature",
+            },
+        },
+    )
+    client.driver.controller.receive_event(event)
+    await hass.async_block_till_done()
+
+    with pytest.raises(TimeoutError):
+        await ws_client.receive_json(timeout=0.1)
+
+    # Test sending command with improper entry ID fails
+    await ws_client.send_json(
+        {
+            ID: 2,
+            TYPE: "zwave_js/subscribe_config_parameter_updates",
+            DEVICE_ID: "fake_device",
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert not msg["success"]
+    assert msg["error"]["code"] == ERR_NOT_FOUND
+
+    # Test sending command with not loaded entry fails
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await ws_client.send_json(
+        {
+            ID: 4,
+            TYPE: "zwave_js/subscribe_config_parameter_updates",
+            DEVICE_ID: multisensor_6_device.id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert not msg["success"]
+    assert msg["error"]["code"] == ERR_NOT_LOADED
+
+
 @pytest.mark.parametrize(
     ("firmware_data", "expected_data"),
     [({"target": "1"}, {"firmware_target": 1}), ({}, {})],
@@ -3501,7 +4149,7 @@ async def test_firmware_upload_view(
             "homeassistant.components.zwave_js.api.update_firmware",
         ) as mock_node_cmd,
         patch(
-            "homeassistant.components.zwave_js.api.controller_firmware_update_otw",
+            "homeassistant.components.zwave_js.api.driver_firmware_update_otw",
         ) as mock_controller_cmd,
         patch.dict(
             "homeassistant.components.zwave_js.api.USER_AGENT",
@@ -3516,10 +4164,8 @@ async def test_firmware_upload_view(
         )
 
         update_data = NodeFirmwareUpdateData(
-            "file", b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+            "file", b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", **expected_data
         )
-        for attr, value in expected_data.items():
-            setattr(update_data, attr, value)
 
         mock_controller_cmd.assert_not_called()
         assert mock_node_cmd.call_args[0][1:3] == (multisensor_6, [update_data])
@@ -3544,7 +4190,7 @@ async def test_firmware_upload_view_controller(
             "homeassistant.components.zwave_js.api.update_firmware",
         ) as mock_node_cmd,
         patch(
-            "homeassistant.components.zwave_js.api.controller_firmware_update_otw",
+            "homeassistant.components.zwave_js.api.driver_firmware_update_otw",
         ) as mock_controller_cmd,
         patch.dict(
             "homeassistant.components.zwave_js.api.USER_AGENT",
@@ -3557,7 +4203,7 @@ async def test_firmware_upload_view_controller(
         )
         mock_node_cmd.assert_not_called()
         assert mock_controller_cmd.call_args[0][1:2] == (
-            ControllerFirmwareUpdateData(
+            DriverFirmwareUpdateData(
                 "file", b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
             ),
         )
@@ -4415,7 +5061,7 @@ async def test_subscribe_controller_firmware_update_status(
     event = Event(
         type="firmware update progress",
         data={
-            "source": "controller",
+            "source": "driver",
             "event": "firmware update progress",
             "progress": {
                 "sentFragments": 1,
@@ -4424,7 +5070,7 @@ async def test_subscribe_controller_firmware_update_status(
             },
         },
     )
-    client.driver.controller.receive_event(event)
+    client.driver.receive_event(event)
 
     msg = await ws_client.receive_json()
     assert msg["event"] == {
@@ -4439,7 +5085,7 @@ async def test_subscribe_controller_firmware_update_status(
     event = Event(
         type="firmware update finished",
         data={
-            "source": "controller",
+            "source": "driver",
             "event": "firmware update finished",
             "result": {
                 "status": 255,
@@ -4447,7 +5093,7 @@ async def test_subscribe_controller_firmware_update_status(
             },
         },
     )
-    client.driver.controller.receive_event(event)
+    client.driver.receive_event(event)
 
     msg = await ws_client.receive_json()
     assert msg["event"] == {
@@ -4464,13 +5110,13 @@ async def test_subscribe_controller_firmware_update_status_initial_value(
     ws_client = await hass_ws_client(hass)
     device = get_device(hass, client.driver.controller.nodes[1])
 
-    assert client.driver.controller.firmware_update_progress is None
+    assert client.driver.firmware_update_progress is None
 
     # Send a firmware update progress event before the WS command
     event = Event(
         type="firmware update progress",
         data={
-            "source": "controller",
+            "source": "driver",
             "event": "firmware update progress",
             "progress": {
                 "sentFragments": 1,
@@ -4479,7 +5125,7 @@ async def test_subscribe_controller_firmware_update_status_initial_value(
             },
         },
     )
-    client.driver.controller.receive_event(event)
+    client.driver.receive_event(event)
 
     client.async_send_command_no_wait.return_value = {}
 
@@ -4980,7 +5626,7 @@ async def test_subscribe_node_statistics(
     assert msg["event"] == {
         "source": "node",
         "event": "statistics updated",
-        "nodeId": multisensor_6.node_id,
+        "node_id": multisensor_6.node_id,
         "commands_tx": 0,
         "commands_rx": 0,
         "commands_dropped_tx": 0,
@@ -5095,6 +5741,147 @@ async def test_subscribe_node_statistics(
     assert msg["error"]["code"] == ERR_NOT_LOADED
 
 
+def _stats_updated_event(node_id: int, repeater_node_id: int) -> Event:
+    """Return a statistics updated event with a route through the repeater."""
+    return Event(
+        "statistics updated",
+        {
+            "source": "node",
+            "event": "statistics updated",
+            "nodeId": node_id,
+            "statistics": {
+                "commandsTX": 1,
+                "commandsRX": 2,
+                "commandsDroppedTX": 3,
+                "commandsDroppedRX": 4,
+                "timeoutResponse": 5,
+                "lwr": {
+                    "protocolDataRate": 1,
+                    "rssi": 1,
+                    "repeaters": [repeater_node_id],
+                    "repeaterRSSI": [1],
+                },
+            },
+        },
+    )
+
+
+async def _subscribe_node_statistics(
+    ws_client: MockHAClientWebSocket, device_id: str
+) -> None:
+    """Subscribe to node statistics and consume the initial state event."""
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/subscribe_node_statistics",
+            DEVICE_ID: device_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+    assert msg["success"]
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "statistics updated"
+
+
+async def test_node_statistics_route_with_removed_node(
+    hass: HomeAssistant,
+    multisensor_6: Node,
+    wallmote_central_scene: Node,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test a route referencing a node that was removed from the network.
+
+    Resolving the repeater in the controller's node collection raises
+    KeyError, which must null the route instead of breaking the subscription.
+    """
+    ws_client = await hass_ws_client(hass)
+    device = get_device(hass, multisensor_6)
+    wallmote_device = get_device(hass, wallmote_central_scene)
+    await _subscribe_node_statistics(ws_client, device.id)
+
+    event = _stats_updated_event(multisensor_6.node_id, 999)
+    event.data["statistics"]["nlwr"] = {
+        "protocolDataRate": 2,
+        "rssi": 2,
+        "repeaters": [wallmote_central_scene.node_id],
+        "repeaterRSSI": [2],
+    }
+    client.driver.controller.receive_event(event)
+    msg = await ws_client.receive_json()
+
+    assert msg["event"]["commands_tx"] == 1
+    assert msg["event"]["lwr"] is None
+    assert msg["event"]["nlwr"] == {
+        "protocol_data_rate": 2,
+        "rssi": 2,
+        "repeaters": [wallmote_device.id],
+        "repeater_rssi": [2],
+        "route_failed_between": None,
+    }
+
+
+async def test_node_statistics_route_with_removed_device(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    multisensor_6: Node,
+    wallmote_central_scene: Node,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test a route referencing a node without a device registry entry.
+
+    Converting the repeater to a device ID raises ValueError, which must null
+    the route instead of breaking the subscription.
+    """
+    ws_client = await hass_ws_client(hass)
+    device = get_device(hass, multisensor_6)
+    wallmote_device = get_device(hass, wallmote_central_scene)
+    await _subscribe_node_statistics(ws_client, device.id)
+
+    device_registry.async_remove_device(wallmote_device.id)
+    await hass.async_block_till_done()
+
+    client.driver.controller.receive_event(
+        _stats_updated_event(multisensor_6.node_id, wallmote_central_scene.node_id)
+    )
+    msg = await ws_client.receive_json()
+
+    assert msg["event"]["commands_tx"] == 1
+    assert msg["event"]["lwr"] is None
+
+
+async def test_node_statistics_route_with_unloaded_entry(
+    hass: HomeAssistant,
+    multisensor_6: Node,
+    wallmote_central_scene: Node,
+    integration: MockConfigEntry,
+    client: MagicMock,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Test a route received after the config entry was unloaded.
+
+    async_get_config_entry_from_node raises StopIteration when no loaded
+    config entry owns the node, which must null the route instead of
+    breaking the subscription.
+    """
+    ws_client = await hass_ws_client(hass)
+    device = get_device(hass, multisensor_6)
+    await _subscribe_node_statistics(ws_client, device.id)
+
+    await hass.config_entries.async_unload(integration.entry_id)
+    await hass.async_block_till_done()
+
+    client.driver.controller.receive_event(
+        _stats_updated_event(multisensor_6.node_id, wallmote_central_scene.node_id)
+    )
+    msg = await ws_client.receive_json()
+
+    assert msg["event"]["commands_tx"] == 1
+    assert msg["event"]["lwr"] is None
+
+
 async def test_hard_reset_controller(
     hass: HomeAssistant,
     caplog: pytest.LogCaptureFixture,
@@ -5109,17 +5896,12 @@ async def test_hard_reset_controller(
     ws_client = await hass_ws_client(hass)
     assert entry.unique_id == "3245146787"
 
-    async def async_send_command_driver_ready(
-        message: dict[str, Any],
-        require_schema: int | None = None,
-    ) -> dict:
-        """Send a command and get a response."""
+    async def mock_driver_hard_reset() -> None:
         client.driver.emit(
             "driver ready", {"event": "driver ready", "source": "driver"}
         )
-        return {}
 
-    client.async_send_command.side_effect = async_send_command_driver_ready
+    client.driver.async_hard_reset = AsyncMock(side_effect=mock_driver_hard_reset)
 
     await ws_client.send_json_auto_id(
         {
@@ -5128,23 +5910,18 @@ async def test_hard_reset_controller(
         }
     )
     msg = await ws_client.receive_json()
+    await hass.async_block_till_done()
 
-    device = device_registry.async_get_device(
-        identifiers={get_device_id(client.driver, client.driver.controller.nodes[1])}
+    device = device_registry.async_get_device_by_identifier(
+        get_device_id(client.driver, client.driver.controller.nodes[1]), entry.entry_id
     )
     assert device is not None
     assert msg["result"] == device.id
     assert msg["success"]
-
-    assert client.async_send_command.call_count == 3
-    # The first call is the relevant hard reset command.
-    # 25 is the require_schema parameter.
-    assert client.async_send_command.call_args_list[0] == call(
-        {"command": "driver.hard_reset"}, 25
-    )
+    assert client.driver.async_hard_reset.call_count == 1
     assert entry.unique_id == "1234"
 
-    client.async_send_command.reset_mock()
+    client.driver.async_hard_reset.reset_mock()
 
     # Test client connect error when getting the server version.
 
@@ -5158,40 +5935,32 @@ async def test_hard_reset_controller(
     )
 
     msg = await ws_client.receive_json()
+    await hass.async_block_till_done()
 
-    device = device_registry.async_get_device(
-        identifiers={get_device_id(client.driver, client.driver.controller.nodes[1])}
+    device = device_registry.async_get_device_by_identifier(
+        get_device_id(client.driver, client.driver.controller.nodes[1]), entry.entry_id
     )
     assert device is not None
     assert msg["result"] == device.id
     assert msg["success"]
-
-    assert client.async_send_command.call_count == 3
-    # The first call is the relevant hard reset command.
-    # 25 is the require_schema parameter.
-    assert client.async_send_command.call_args_list[0] == call(
-        {"command": "driver.hard_reset"}, 25
-    )
+    assert client.driver.async_hard_reset.call_count == 1
     assert (
-        "Failed to get server version, cannot update config entry"
+        "Failed to get server version, cannot update config entry "
         "unique id with new home id, after controller reset"
     ) in caplog.text
 
-    client.async_send_command.reset_mock()
+    client.driver.async_hard_reset.reset_mock()
+    get_server_version.side_effect = None
 
     # Test sending command with driver not ready and timeout.
 
-    async def async_send_command_no_driver_ready(
-        message: dict[str, Any],
-        require_schema: int | None = None,
-    ) -> dict:
-        """Send a command and get a response."""
-        return {}
+    async def mock_driver_hard_reset_no_driver_ready() -> None:
+        pass
 
-    client.async_send_command.side_effect = async_send_command_no_driver_ready
+    client.driver.async_hard_reset.side_effect = mock_driver_hard_reset_no_driver_ready
 
     with patch(
-        "homeassistant.components.zwave_js.api.HARD_RESET_CONTROLLER_DRIVER_READY_TIMEOUT",
+        "homeassistant.components.zwave_js.helpers.DRIVER_READY_EVENT_TIMEOUT",
         new=0,
     ):
         await ws_client.send_json_auto_id(
@@ -5201,39 +5970,37 @@ async def test_hard_reset_controller(
             }
         )
         msg = await ws_client.receive_json()
+        await hass.async_block_till_done()
 
-    device = device_registry.async_get_device(
-        identifiers={get_device_id(client.driver, client.driver.controller.nodes[1])}
+    device = device_registry.async_get_device_by_identifier(
+        get_device_id(client.driver, client.driver.controller.nodes[1]), entry.entry_id
     )
     assert device is not None
     assert msg["result"] == device.id
     assert msg["success"]
+    assert client.driver.async_hard_reset.call_count == 1
 
-    assert client.async_send_command.call_count == 3
-    # The first call is the relevant hard reset command.
-    # 25 is the require_schema parameter.
-    assert client.async_send_command.call_args_list[0] == call(
-        {"command": "driver.hard_reset"}, 25
-    )
-
-    client.async_send_command.reset_mock()
+    client.driver.async_hard_reset.reset_mock()
 
     # Test FailedZWaveCommand is caught
-    with patch(
-        "zwave_js_server.model.driver.Driver.async_hard_reset",
-        side_effect=FailedZWaveCommand("failed_command", 1, "error message"),
-    ):
-        await ws_client.send_json_auto_id(
-            {
-                TYPE: "zwave_js/hard_reset_controller",
-                ENTRY_ID: entry.entry_id,
-            }
-        )
-        msg = await ws_client.receive_json()
+    client.driver.async_hard_reset.side_effect = FailedZWaveCommand(
+        "failed_command", 1, "error message"
+    )
 
-        assert not msg["success"]
-        assert msg["error"]["code"] == "zwave_error"
-        assert msg["error"]["message"] == "zwave_error: Z-Wave error 1 - error message"
+    await ws_client.send_json_auto_id(
+        {
+            TYPE: "zwave_js/hard_reset_controller",
+            ENTRY_ID: entry.entry_id,
+        }
+    )
+    msg = await ws_client.receive_json()
+
+    assert not msg["success"]
+    assert msg["error"]["code"] == "zwave_error"
+    assert msg["error"]["message"] == "zwave_error: Z-Wave error 1 - error message"
+    assert client.driver.async_hard_reset.call_count == 1
+
+    client.driver.async_hard_reset.side_effect = None
 
     # Test sending command with not loaded entry fails
     await hass.config_entries.async_unload(entry.entry_id)
@@ -5416,36 +6183,6 @@ async def test_invoke_cc_api(
     assert msg["error"] == {"code": "NotFoundError", "message": ""}
 
 
-@pytest.mark.parametrize(
-    ("config", "installer_mode"), [({}, False), ({CONF_INSTALLER_MODE: True}, True)]
-)
-async def test_get_integration_settings(
-    config: dict[str, Any],
-    installer_mode: bool,
-    hass: HomeAssistant,
-    client: MagicMock,
-    hass_ws_client: WebSocketGenerator,
-) -> None:
-    """Test that the get_integration_settings WS API call works."""
-    ws_client = await hass_ws_client(hass)
-
-    entry = MockConfigEntry(domain="zwave_js", data={"url": "ws://test.org"})
-    entry.add_to_hass(hass)
-    assert await async_setup_component(hass, DOMAIN, {DOMAIN: config})
-    await hass.async_block_till_done()
-
-    await ws_client.send_json_auto_id(
-        {
-            TYPE: "zwave_js/get_integration_settings",
-        }
-    )
-    msg = await ws_client.receive_json()
-    assert msg["success"]
-    assert msg["result"] == {
-        CONF_INSTALLER_MODE: installer_mode,
-    }
-
-
 async def test_backup_nvm(
     hass: HomeAssistant,
     integration,
@@ -5567,24 +6304,35 @@ async def test_restore_nvm(
     integration,
     client,
     hass_ws_client: WebSocketGenerator,
+    get_server_version: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test the restore NVM websocket command."""
+    entry = integration
+    assert entry.unique_id == "3245146787"
     ws_client = await hass_ws_client(hass)
 
     # Set up mocks for the controller events
     controller = client.driver.controller
 
-    async def async_send_command_driver_ready(
-        message: dict[str, Any],
-        require_schema: int | None = None,
-    ) -> dict:
-        """Send a command and get a response."""
+    async def mock_restore_nvm_base64(
+        self, base64_data: str, options: dict[str, bool] | None = None
+    ) -> None:
+        controller.emit(
+            "nvm convert progress",
+            {"event": "nvm convert progress", "bytesRead": 100, "total": 200},
+        )
+        await asyncio.sleep(0)
+        controller.emit(
+            "nvm restore progress",
+            {"event": "nvm restore progress", "bytesWritten": 150, "total": 200},
+        )
+        controller.data["homeId"] = 3245146787
         client.driver.emit(
             "driver ready", {"event": "driver ready", "source": "driver"}
         )
-        return {}
 
-    client.async_send_command.side_effect = async_send_command_driver_ready
+    controller.async_restore_nvm_base64 = AsyncMock(side_effect=mock_restore_nvm_base64)
 
     # Send the subscription request
     await ws_client.send_json_auto_id(
@@ -5595,7 +6343,19 @@ async def test_restore_nvm(
         }
     )
 
-    # Verify the finished event first
+    # Verify the convert progress event
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "nvm convert progress"
+    assert msg["event"]["bytesRead"] == 100
+    assert msg["event"]["total"] == 200
+
+    # Verify the restore progress event
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "nvm restore progress"
+    assert msg["event"]["bytesWritten"] == 150
+    assert msg["event"]["total"] == 200
+
+    # Verify the finished event
     msg = await ws_client.receive_json()
     assert msg["type"] == "event"
     assert msg["event"]["event"] == "finished"
@@ -5605,77 +6365,94 @@ async def test_restore_nvm(
     assert msg["type"] == "result"
     assert msg["success"] is True
 
-    # Simulate progress events
-    event = Event(
-        "nvm restore progress",
-        {
-            "source": "controller",
-            "event": "nvm restore progress",
-            "bytesWritten": 25,
-            "total": 100,
-        },
-    )
-    controller.receive_event(event)
-    msg = await ws_client.receive_json()
-    assert msg["event"]["event"] == "nvm restore progress"
-    assert msg["event"]["bytesWritten"] == 25
-    assert msg["event"]["total"] == 100
-
-    event = Event(
-        "nvm restore progress",
-        {
-            "source": "controller",
-            "event": "nvm restore progress",
-            "bytesWritten": 50,
-            "total": 100,
-        },
-    )
-    controller.receive_event(event)
-    msg = await ws_client.receive_json()
-    assert msg["event"]["event"] == "nvm restore progress"
-    assert msg["event"]["bytesWritten"] == 50
-    assert msg["event"]["total"] == 100
-
     await hass.async_block_till_done()
 
     # Verify the restore was called
     # The first call is the relevant one for nvm restore.
-    assert client.async_send_command.call_count == 3
-    assert client.async_send_command.call_args_list[0] == call(
+    assert controller.async_restore_nvm_base64.call_count == 1
+    assert controller.async_restore_nvm_base64.call_args == call(
+        "dGVzdA==",
+        {"preserveRoutes": False},
+    )
+    assert entry.unique_id == "1234"
+
+    controller.async_restore_nvm_base64.reset_mock()
+
+    # Test client connect error when getting the server version.
+
+    get_server_version.side_effect = ClientError("Boom!")
+
+    # Send the subscription request
+    await ws_client.send_json_auto_id(
         {
-            "command": "controller.restore_nvm",
-            "nvmData": "dGVzdA==",
-        },
-        require_schema=14,
+            "type": "zwave_js/restore_nvm",
+            "entry_id": entry.entry_id,
+            "data": "dGVzdA==",  # base64 encoded "test"
+        }
     )
 
-    client.async_send_command.reset_mock()
+    # Verify the convert progress event
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "nvm convert progress"
+    assert msg["event"]["bytesRead"] == 100
+    assert msg["event"]["total"] == 200
 
-    # Test sending command with driver not ready and timeout.
+    # Verify the restore progress event
+    msg = await ws_client.receive_json()
+    assert msg["event"]["event"] == "nvm restore progress"
+    assert msg["event"]["bytesWritten"] == 150
+    assert msg["event"]["total"] == 200
 
-    async def async_send_command_no_driver_ready(
-        message: dict[str, Any],
-        require_schema: int | None = None,
-    ) -> dict:
-        """Send a command and get a response."""
-        return {}
+    # Verify the finished event
+    msg = await ws_client.receive_json()
+    assert msg["type"] == "event"
+    assert msg["event"]["event"] == "finished"
 
-    client.async_send_command.side_effect = async_send_command_no_driver_ready
+    # Verify subscription success
+    msg = await ws_client.receive_json()
+    assert msg["type"] == "result"
+    assert msg["success"] is True
+
+    await hass.async_block_till_done()
+
+    assert controller.async_restore_nvm_base64.call_count == 1
+    assert controller.async_restore_nvm_base64.call_args == call(
+        "dGVzdA==",
+        {"preserveRoutes": False},
+    )
+    assert (
+        "Failed to get server version, cannot update config entry "
+        "unique id with new home id, after controller NVM restore"
+    ) in caplog.text
+
+    controller.async_restore_nvm_base64.reset_mock()
+    get_server_version.side_effect = None
+
+    # Test sending command without driver ready event causing timeout.
+
+    async def mock_restore_nvm_without_driver_ready(
+        data: bytes, options: dict[str, bool] | None = None
+    ):
+        controller.data["homeId"] = 3245146787
+
+    controller.async_restore_nvm_base64.side_effect = (
+        mock_restore_nvm_without_driver_ready
+    )
 
     with patch(
-        "homeassistant.components.zwave_js.api.RESTORE_NVM_DRIVER_READY_TIMEOUT",
+        "homeassistant.components.zwave_js.helpers.DRIVER_READY_EVENT_TIMEOUT",
         new=0,
     ):
         # Send the subscription request
         await ws_client.send_json_auto_id(
             {
                 "type": "zwave_js/restore_nvm",
-                "entry_id": integration.entry_id,
+                "entry_id": entry.entry_id,
                 "data": "dGVzdA==",  # base64 encoded "test"
             }
         )
 
-        # Verify the finished event first
+        # Verify the finished event
         msg = await ws_client.receive_json()
 
         assert msg["type"] == "event"
@@ -5689,36 +6466,41 @@ async def test_restore_nvm(
         await hass.async_block_till_done()
 
     # Verify the restore was called
-    # The first call is the relevant one for nvm restore.
-    assert client.async_send_command.call_count == 3
-    assert client.async_send_command.call_args_list[0] == call(
-        {
-            "command": "controller.restore_nvm",
-            "nvmData": "dGVzdA==",
-        },
-        require_schema=14,
+    assert controller.async_restore_nvm_base64.call_count == 1
+    assert controller.async_restore_nvm_base64.call_args == call(
+        "dGVzdA==",
+        {"preserveRoutes": False},
     )
 
-    client.async_send_command.reset_mock()
+    controller.async_restore_nvm_base64.reset_mock()
 
     # Test restore failure
-    with patch(
-        f"{CONTROLLER_PATCH_PREFIX}.async_restore_nvm_base64",
-        side_effect=FailedZWaveCommand("failed_command", 1, "error message"),
-    ):
-        # Send the subscription request
-        await ws_client.send_json_auto_id(
-            {
-                "type": "zwave_js/restore_nvm",
-                "entry_id": integration.entry_id,
-                "data": "dGVzdA==",  # base64 encoded "test"
-            }
-        )
+    controller.async_restore_nvm_base64.side_effect = FailedZWaveCommand(
+        "failed_command", 1, "error message"
+    )
 
-        # Verify error response
-        msg = await ws_client.receive_json()
-        assert not msg["success"]
-        assert msg["error"]["code"] == "zwave_error"
+    # Send the subscription request
+    await ws_client.send_json_auto_id(
+        {
+            "type": "zwave_js/restore_nvm",
+            "entry_id": entry.entry_id,
+            "data": "dGVzdA==",  # base64 encoded "test"
+        }
+    )
+
+    # Verify error response
+    msg = await ws_client.receive_json()
+    assert not msg["success"]
+    assert msg["error"]["code"] == "zwave_error"
+
+    await hass.async_block_till_done()
+
+    # Verify the restore was called
+    assert controller.async_restore_nvm_base64.call_count == 1
+    assert controller.async_restore_nvm_base64.call_args == call(
+        "dGVzdA==",
+        {"preserveRoutes": False},
+    )
 
     # Test entry_id not found
     await ws_client.send_json_auto_id(
@@ -5733,13 +6515,13 @@ async def test_restore_nvm(
     assert msg["error"]["code"] == "not_found"
 
     # Test config entry not loaded
-    await hass.config_entries.async_unload(integration.entry_id)
+    await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
     await ws_client.send_json_auto_id(
         {
             "type": "zwave_js/restore_nvm",
-            "entry_id": integration.entry_id,
+            "entry_id": entry.entry_id,
             "data": "dGVzdA==",  # base64 encoded "test"
         }
     )

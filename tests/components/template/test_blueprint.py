@@ -1,6 +1,6 @@
 """Test blueprints."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import contextlib
 from os import PathLike
 import pathlib
@@ -16,6 +16,22 @@ from homeassistant.components.blueprint import (
     DomainBlueprints,
 )
 from homeassistant.components.template import DOMAIN, SERVICE_RELOAD
+from homeassistant.components.template.config import (
+    ALARM_CONTROL_PANEL_DOMAIN,
+    BINARY_SENSOR_DOMAIN,
+    COVER_DOMAIN,
+    FAN_DOMAIN,
+    IMAGE_DOMAIN,
+    LIGHT_DOMAIN,
+    LOCK_DOMAIN,
+    NUMBER_DOMAIN,
+    SELECT_DOMAIN,
+    SENSOR_DOMAIN,
+    SWITCH_DOMAIN,
+    VACUUM_DOMAIN,
+    WEATHER_DOMAIN,
+)
+from homeassistant.const import STATE_ON
 from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.setup import async_setup_component
@@ -54,7 +70,7 @@ def patch_blueprint(
 
 
 @contextlib.contextmanager
-def patch_invalid_blueprint() -> Iterator[None]:
+def patch_invalid_blueprint_with_multiple_platforms() -> Iterator[None]:
     """Patch blueprint returning an invalid one."""
 
     @callback
@@ -67,6 +83,35 @@ def patch_invalid_blueprint() -> Iterator[None]:
                 },
                 "binary_sensor": {},
                 "sensor": {},
+            },
+            expected_domain=self.domain,
+            path=path,
+            schema=BLUEPRINT_SCHEMA,
+        )
+
+    with patch(
+        "homeassistant.components.blueprint.models.DomainBlueprints._load_blueprint",
+        mock_load_blueprint,
+    ):
+        yield
+
+
+@contextlib.contextmanager
+def patch_invalid_blueprint_with_multiple_entities() -> Iterator[None]:
+    """Patch blueprint returning an invalid blueprint with multiple entities."""
+
+    @callback
+    def mock_load_blueprint(self, path):
+        return Blueprint(
+            {
+                "blueprint": {
+                    "domain": "template",
+                    "name": "Invalid template blueprint with multiple entities",
+                },
+                "sensor": [
+                    {"name": "Sensor 1", "state": "{{ now() }}"},
+                    {"name": "Sensor 2", "state": "{{ now() }}"},
+                ],
             },
             expected_domain=self.domain,
             path=path,
@@ -93,7 +138,7 @@ async def test_inverted_binary_sensor(
     ):
         assert await async_setup_component(
             hass,
-            "template",
+            DOMAIN,
             {
                 "template": [
                     {
@@ -212,9 +257,138 @@ async def test_reload_template_when_blueprint_changes(hass: HomeAssistant) -> No
     assert not_inverted.state == "on"
 
 
+async def test_init_attribute_variables_from_blueprint(hass: HomeAssistant) -> None:
+    """Test blueprint initializes icon, name, and picture with variables."""
+    blueprint = "test_init_attribute_variables.yaml"
+    source = "switch.foo"
+    entity_id = "sensor.foo"
+    hass.states.async_set(source, "on", {"friendly_name": "Foo"})
+    config = {
+        DOMAIN: [
+            {
+                "use_blueprint": {
+                    "path": blueprint,
+                    "input": {"switch": source},
+                },
+            }
+        ],
+    }
+    assert await async_setup_component(
+        hass,
+        DOMAIN,
+        config,
+    )
+    await hass.async_block_till_done()
+
+    # Check initial state
+    sensor = hass.states.get(entity_id)
+    assert sensor
+    assert sensor.state == "True"
+    assert sensor.attributes["icon"] == "mdi:lightbulb"
+    assert sensor.attributes["entity_picture"] == "on.png"
+    assert sensor.attributes["friendly_name"] == "Foo"
+    assert sensor.attributes["extra"] == "ab"
+
+    hass.states.async_set(source, "off", {"friendly_name": "Foo"})
+    await hass.async_block_till_done()
+
+    # Check to see that the template light works
+    sensor = hass.states.get(entity_id)
+    assert sensor
+    assert sensor.state == "False"
+    assert sensor.attributes["icon"] == "mdi:lightbulb-off"
+    assert sensor.attributes["entity_picture"] == "off.png"
+    assert sensor.attributes["friendly_name"] == "Foo"
+    assert sensor.attributes["extra"] == "ab"
+
+    # Reload the templates without any change, but with updated blueprint
+    blueprint_config = yaml_util.load_yaml(
+        pathlib.Path(__file__).resolve().parents[2]
+        / "testing_config/blueprints/template"
+        / blueprint
+    )
+    blueprint_config["variables"]["extraa"] = "c"
+    blueprint_config["sensor"]["variables"]["extrab"] = "d"
+    with (
+        patch(
+            "homeassistant.config.load_yaml_config_file",
+            autospec=True,
+            return_value=config,
+        ),
+        patch(
+            "homeassistant.components.blueprint.models.yaml_util.load_yaml_dict",
+            autospec=True,
+            return_value=blueprint_config,
+        ),
+    ):
+        await hass.services.async_call(DOMAIN, SERVICE_RELOAD, blocking=True)
+
+    sensor = hass.states.get(entity_id)
+    assert sensor
+    assert sensor.state == "False"
+    assert sensor.attributes["icon"] == "mdi:lightbulb-off"
+    assert sensor.attributes["entity_picture"] == "off.png"
+    assert sensor.attributes["friendly_name"] == "Foo"
+    assert sensor.attributes["extra"] == "cd"
+
+    hass.states.async_set(source, "on", {"friendly_name": "Foo"})
+    await hass.async_block_till_done()
+
+    sensor = hass.states.get(entity_id)
+    assert sensor
+    assert sensor.state == "True"
+    assert sensor.attributes["icon"] == "mdi:lightbulb"
+    assert sensor.attributes["entity_picture"] == "on.png"
+    assert sensor.attributes["friendly_name"] == "Foo"
+    assert sensor.attributes["extra"] == "cd"
+
+
+async def test_init_attribute_variables_from_blueprint_listed(
+    hass: HomeAssistant,
+) -> None:
+    """Test a state-based blueprint using the listed platform format with variables.
+
+    The blueprint defines its `sensor:` section as a single-entry list and has
+    section-level `variables:`. The variables must still be merged into the
+    listed entity config.
+    """
+    blueprint = "test_init_attribute_variables_listed.yaml"
+    source = "switch.foo"
+    entity_id = "sensor.foo"
+    hass.states.async_set(source, "on", {"friendly_name": "Foo"})
+    config = {
+        DOMAIN: [
+            {
+                "use_blueprint": {
+                    "path": blueprint,
+                    "input": {"switch": source},
+                },
+            }
+        ],
+    }
+    assert await async_setup_component(
+        hass,
+        DOMAIN,
+        config,
+    )
+    await hass.async_block_till_done()
+
+    sensor = hass.states.get(entity_id)
+    assert sensor
+    assert sensor.state == "True"
+    assert sensor.attributes["icon"] == "mdi:lightbulb"
+    assert sensor.attributes["entity_picture"] == "on.png"
+    assert sensor.attributes["friendly_name"] == "Foo"
+    assert sensor.attributes["extra"] == "ab"
+
+
 @pytest.mark.parametrize(
     ("blueprint"),
-    ["test_event_sensor.yaml", "test_event_sensor_legacy_schema.yaml"],
+    [
+        "test_event_sensor.yaml",
+        "test_event_sensor_legacy_schema.yaml",
+        "test_event_sensor_legacy_schema_listed.yaml",
+    ],
 )
 async def test_trigger_event_sensor(
     hass: HomeAssistant,
@@ -224,7 +398,7 @@ async def test_trigger_event_sensor(
     """Test event sensor blueprint."""
     assert await async_setup_component(
         hass,
-        "template",
+        DOMAIN,
         {
             "template": [
                 {
@@ -303,7 +477,7 @@ async def test_blueprint_template_override(
     """Test blueprint template where the template config overrides the blueprint."""
     assert await async_setup_component(
         hass,
-        "template",
+        DOMAIN,
         {
             "template": [
                 {
@@ -395,15 +569,31 @@ async def test_domain_blueprint(hass: HomeAssistant) -> None:
     assert len(reload_handler_calls) == 1
 
 
+@pytest.mark.parametrize(
+    ("blueprint_patch", "error"),
+    [
+        (
+            patch_invalid_blueprint_with_multiple_entities,
+            "more than one sensor entity defined in blueprint",
+        ),
+        (
+            patch_invalid_blueprint_with_multiple_platforms,
+            "more than one platform defined per blueprint",
+        ),
+    ],
+)
 async def test_invalid_blueprint(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    hass: HomeAssistant,
+    blueprint_patch: Callable[[], contextlib.AbstractContextManager[None]],
+    error: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test an invalid blueprint definition."""
 
-    with patch_invalid_blueprint():
+    with blueprint_patch():
         assert await async_setup_component(
             hass,
-            "template",
+            DOMAIN,
             {
                 "template": [
                     {
@@ -416,7 +606,7 @@ async def test_invalid_blueprint(
             },
         )
 
-    assert "more than one platform defined per blueprint" in caplog.text
+    assert error in caplog.text
     blueprints = await template.async_get_blueprints(hass).async_get_blueprints()
     assert "invalid.yaml" not in blueprints
 
@@ -429,7 +619,7 @@ async def test_no_blueprint(hass: HomeAssistant) -> None:
     ):
         assert await async_setup_component(
             hass,
-            "template",
+            DOMAIN,
             {
                 "template": [
                     {"binary_sensor": {"name": "test entity", "state": "off"}},
@@ -459,3 +649,51 @@ async def test_no_blueprint(hass: HomeAssistant) -> None:
         template.helpers.blueprint_in_template(hass, "binary_sensor.test_entity")
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("domain", "set_state", "expected"),
+    [
+        (ALARM_CONTROL_PANEL_DOMAIN, STATE_ON, "armed_home"),
+        (BINARY_SENSOR_DOMAIN, STATE_ON, STATE_ON),
+        (COVER_DOMAIN, STATE_ON, "open"),
+        (FAN_DOMAIN, STATE_ON, STATE_ON),
+        (IMAGE_DOMAIN, "test.jpg", "2025-06-13T00:00:00+00:00"),
+        (LIGHT_DOMAIN, STATE_ON, STATE_ON),
+        (LOCK_DOMAIN, STATE_ON, "locked"),
+        (NUMBER_DOMAIN, "1", "1.0"),
+        (SELECT_DOMAIN, "option1", "option1"),
+        (SENSOR_DOMAIN, "foo", "foo"),
+        (SWITCH_DOMAIN, STATE_ON, STATE_ON),
+        (VACUUM_DOMAIN, "cleaning", "cleaning"),
+        (WEATHER_DOMAIN, "sunny", "sunny"),
+    ],
+)
+@pytest.mark.freeze_time("2025-06-13 00:00:00+00:00")
+async def test_variables_for_entity(
+    hass: HomeAssistant, domain: str, set_state: str, expected: str
+) -> None:
+    """Test regular template entities via blueprint with variables defined."""
+    hass.states.async_set("sensor.test_state", set_state)
+    await hass.async_block_till_done()
+
+    assert await async_setup_component(
+        hass,
+        DOMAIN,
+        {
+            "template": [
+                {
+                    "use_blueprint": {
+                        "path": f"test_{domain}_with_variables.yaml",
+                        "input": {"sensor": "sensor.test_state"},
+                    },
+                    "name": "Test",
+                },
+            ]
+        },
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get(f"{domain}.test")
+    assert state is not None
+    assert state.state == expected

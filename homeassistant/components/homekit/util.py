@@ -1,7 +1,5 @@
 """Collection of useful functions for the HomeKit component."""
 
-from __future__ import annotations
-
 import io
 import ipaddress
 import logging
@@ -15,28 +13,35 @@ from pyhap.accessory import Accessory
 import pyqrcode
 import voluptuous as vol
 
-from homeassistant.components import (
-    binary_sensor,
-    media_player,
-    persistent_notification,
-    sensor,
+from homeassistant.components import persistent_notification
+from homeassistant.components.alarm_control_panel import (
+    DOMAIN as ALARM_CONTROL_PANEL_DOMAIN,
 )
+from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
+from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
+from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
 from homeassistant.components.event import DOMAIN as EVENT_DOMAIN
+from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
+from homeassistant.components.humidifier import DOMAIN as HUMIDIFIER_DOMAIN
+from homeassistant.components.input_number import DOMAIN as INPUT_NUMBER_DOMAIN
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.components.media_player import (
     DOMAIN as MEDIA_PLAYER_DOMAIN,
     MediaPlayerDeviceClass,
     MediaPlayerEntityFeature,
 )
+from homeassistant.components.number import DOMAIN as NUMBER_DOMAIN
 from homeassistant.components.remote import DOMAIN as REMOTE_DOMAIN, RemoteEntityFeature
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
+from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
+from homeassistant.components.valve import DOMAIN as VALVE_DOMAIN
 from homeassistant.const import (
     ATTR_CODE,
-    ATTR_DEVICE_CLASS,
-    ATTR_SUPPORTED_FEATURES,
     CONF_NAME,
     CONF_PORT,
     CONF_TYPE,
+    EntityStateAttribute,
     UnitOfTemperature,
 )
 from homeassistant.core import (
@@ -69,6 +74,8 @@ from .const import (
     CONF_LINKED_OBSTRUCTION_SENSOR,
     CONF_LINKED_PM25_SENSOR,
     CONF_LINKED_TEMPERATURE_SENSOR,
+    CONF_LINKED_VALVE_DURATION,
+    CONF_LINKED_VALVE_END_TIME,
     CONF_LOW_BATTERY_THRESHOLD,
     CONF_MAX_FPS,
     CONF_MAX_HEIGHT,
@@ -105,13 +112,16 @@ from .const import (
     TYPE_AIR_PURIFIER,
     TYPE_FAN,
     TYPE_FAUCET,
+    TYPE_HEATER_COOLER,
     TYPE_OUTLET,
     TYPE_SHOWER,
     TYPE_SPRINKLER,
     TYPE_SWITCH,
+    TYPE_THERMOSTAT,
     TYPE_VALVE,
     VIDEO_CODEC_COPY,
     VIDEO_CODEC_H264_OMX,
+    VIDEO_CODEC_H264_QSV,
     VIDEO_CODEC_H264_V4L2M2M,
     VIDEO_CODEC_LIBX264,
 )
@@ -130,6 +140,7 @@ MAX_PORT = 65535
 VALID_VIDEO_CODECS = [
     VIDEO_CODEC_LIBX264,
     VIDEO_CODEC_H264_OMX,
+    VIDEO_CODEC_H264_QSV,
     VIDEO_CODEC_H264_V4L2M2M,
     AUDIO_CODEC_COPY,
 ]
@@ -138,9 +149,9 @@ VALID_AUDIO_CODECS = [AUDIO_CODEC_OPUS, VIDEO_CODEC_COPY]
 BASIC_INFO_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME): cv.string,
-        vol.Optional(CONF_LINKED_BATTERY_SENSOR): cv.entity_domain(sensor.DOMAIN),
+        vol.Optional(CONF_LINKED_BATTERY_SENSOR): cv.entity_domain(SENSOR_DOMAIN),
         vol.Optional(CONF_LINKED_BATTERY_CHARGING_SENSOR): cv.entity_domain(
-            binary_sensor.DOMAIN
+            BINARY_SENSOR_DOMAIN
         ),
         vol.Optional(
             CONF_LOW_BATTERY_THRESHOLD, default=DEFAULT_LOW_BATTERY_THRESHOLD
@@ -181,16 +192,16 @@ CAMERA_SCHEMA = BASIC_INFO_SCHEMA.extend(
             CONF_VIDEO_PACKET_SIZE, default=DEFAULT_VIDEO_PACKET_SIZE
         ): cv.positive_int,
         vol.Optional(CONF_LINKED_MOTION_SENSOR): cv.entity_domain(
-            [binary_sensor.DOMAIN, EVENT_DOMAIN]
+            [BINARY_SENSOR_DOMAIN, EVENT_DOMAIN]
         ),
         vol.Optional(CONF_LINKED_DOORBELL_SENSOR): cv.entity_domain(
-            [binary_sensor.DOMAIN, EVENT_DOMAIN]
+            [BINARY_SENSOR_DOMAIN, EVENT_DOMAIN]
         ),
     }
 )
 
 HUMIDIFIER_SCHEMA = BASIC_INFO_SCHEMA.extend(
-    {vol.Optional(CONF_LINKED_HUMIDITY_SENSOR): cv.entity_domain(sensor.DOMAIN)}
+    {vol.Optional(CONF_LINKED_HUMIDITY_SENSOR): cv.entity_domain(SENSOR_DOMAIN)}
 )
 
 FAN_SCHEMA = BASIC_INFO_SCHEMA.extend(
@@ -204,21 +215,36 @@ FAN_SCHEMA = BASIC_INFO_SCHEMA.extend(
                 )
             ),
         ),
-        vol.Optional(CONF_LINKED_HUMIDITY_SENSOR): cv.entity_domain(sensor.DOMAIN),
-        vol.Optional(CONF_LINKED_PM25_SENSOR): cv.entity_domain(sensor.DOMAIN),
-        vol.Optional(CONF_LINKED_TEMPERATURE_SENSOR): cv.entity_domain(sensor.DOMAIN),
+        vol.Optional(CONF_LINKED_HUMIDITY_SENSOR): cv.entity_domain(SENSOR_DOMAIN),
+        vol.Optional(CONF_LINKED_PM25_SENSOR): cv.entity_domain(SENSOR_DOMAIN),
+        vol.Optional(CONF_LINKED_TEMPERATURE_SENSOR): cv.entity_domain(SENSOR_DOMAIN),
         vol.Optional(CONF_LINKED_FILTER_CHANGE_INDICATION): cv.entity_domain(
-            binary_sensor.DOMAIN
+            BINARY_SENSOR_DOMAIN
         ),
-        vol.Optional(CONF_LINKED_FILTER_LIFE_LEVEL): cv.entity_domain(sensor.DOMAIN),
+        vol.Optional(CONF_LINKED_FILTER_LIFE_LEVEL): cv.entity_domain(SENSOR_DOMAIN),
     }
 )
 
 COVER_SCHEMA = BASIC_INFO_SCHEMA.extend(
     {
         vol.Optional(CONF_LINKED_OBSTRUCTION_SENSOR): cv.entity_domain(
-            binary_sensor.DOMAIN
+            BINARY_SENSOR_DOMAIN
         )
+    }
+)
+
+# No default so an unset type keeps the automatic Thermostat/HeaterCooler routing.
+CLIMATE_SCHEMA = BASIC_INFO_SCHEMA.extend(
+    {
+        vol.Optional(CONF_TYPE): vol.All(
+            cv.string,
+            vol.In(
+                (
+                    TYPE_HEATER_COOLER,
+                    TYPE_THERMOSTAT,
+                )
+            ),
+        ),
     }
 )
 
@@ -229,7 +255,7 @@ CODE_SCHEMA = BASIC_INFO_SCHEMA.extend(
 LOCK_SCHEMA = CODE_SCHEMA.extend(
     {
         vol.Optional(CONF_LINKED_DOORBELL_SENSOR): cv.entity_domain(
-            [binary_sensor.DOMAIN, EVENT_DOMAIN]
+            [BINARY_SENSOR_DOMAIN, EVENT_DOMAIN]
         ),
     }
 )
@@ -264,7 +290,11 @@ SWITCH_TYPE_SCHEMA = BASIC_INFO_SCHEMA.extend(
                     TYPE_VALVE,
                 )
             ),
-        )
+        ),
+        vol.Optional(CONF_LINKED_VALVE_DURATION): cv.entity_domain(
+            [INPUT_NUMBER_DOMAIN, NUMBER_DOMAIN]
+        ),
+        vol.Optional(CONF_LINKED_VALVE_END_TIME): cv.entity_domain(SENSOR_DOMAIN),
     }
 )
 
@@ -275,6 +305,18 @@ SENSOR_SCHEMA = BASIC_INFO_SCHEMA.extend(
     }
 )
 
+VALVE_SCHEMA = BASIC_INFO_SCHEMA.extend(
+    {
+        vol.Optional(CONF_TYPE): vol.All(
+            cv.string,
+            vol.In((TYPE_FAUCET, TYPE_SHOWER, TYPE_SPRINKLER, TYPE_VALVE)),
+        ),
+        vol.Optional(CONF_LINKED_VALVE_DURATION): cv.entity_domain(
+            [INPUT_NUMBER_DOMAIN, NUMBER_DOMAIN]
+        ),
+        vol.Optional(CONF_LINKED_VALVE_END_TIME): cv.entity_domain(SENSOR_DOMAIN),
+    }
+)
 
 HOMEKIT_CHAR_TRANSLATIONS = {
     0: " ",  # nul
@@ -323,10 +365,10 @@ def validate_entity_config(values: dict) -> dict[str, dict]:
         if not isinstance(config, dict):
             raise vol.Invalid(f"The configuration for {entity} must be a dictionary.")
 
-        if domain == "alarm_control_panel":
+        if domain == ALARM_CONTROL_PANEL_DOMAIN:
             config = CODE_SCHEMA(config)
 
-        elif domain == media_player.const.DOMAIN:
+        elif domain == MEDIA_PLAYER_DOMAIN:
             config = FEATURE_SCHEMA(config)
             feature_list = {}
             for feature in config[CONF_FEATURE_LIST]:
@@ -337,26 +379,32 @@ def validate_entity_config(values: dict) -> dict[str, dict]:
                 feature_list[key] = params
             config[CONF_FEATURE_LIST] = feature_list
 
-        elif domain == "camera":
+        elif domain == CAMERA_DOMAIN:
             config = CAMERA_SCHEMA(config)
 
-        elif domain == "lock":
+        elif domain == LOCK_DOMAIN:
             config = LOCK_SCHEMA(config)
 
-        elif domain == "switch":
+        elif domain == SWITCH_DOMAIN:
             config = SWITCH_TYPE_SCHEMA(config)
 
-        elif domain == "humidifier":
+        elif domain == HUMIDIFIER_DOMAIN:
             config = HUMIDIFIER_SCHEMA(config)
 
-        elif domain == "cover":
+        elif domain == CLIMATE_DOMAIN:
+            config = CLIMATE_SCHEMA(config)
+
+        elif domain == COVER_DOMAIN:
             config = COVER_SCHEMA(config)
 
-        elif domain == "fan":
+        elif domain == FAN_DOMAIN:
             config = FAN_SCHEMA(config)
 
-        elif domain == "sensor":
+        elif domain == SENSOR_DOMAIN:
             config = SENSOR_SCHEMA(config)
+
+        elif domain == VALVE_DOMAIN:
+            config = VALVE_SCHEMA(config)
 
         else:
             config = BASIC_INFO_SCHEMA(config)
@@ -367,7 +415,7 @@ def validate_entity_config(values: dict) -> dict[str, dict]:
 
 def get_media_player_features(state: State) -> list[str]:
     """Determine features for media players."""
-    features = state.attributes.get(ATTR_SUPPORTED_FEATURES, 0)
+    features = state.attributes.get(EntityStateAttribute.SUPPORTED_FEATURES, 0)
 
     supported_modes = []
     if features & (
@@ -439,7 +487,7 @@ def convert_to_float(state: Any) -> float | None:
     """Return float of state, catch errors."""
     try:
         return float(state)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -447,7 +495,7 @@ def coerce_int(state: str) -> int:
     """Return int."""
     try:
         return int(state)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return 0
 
 
@@ -478,7 +526,7 @@ def temperature_to_states(temperature: float, unit: str) -> float:
 
 
 def density_to_air_quality(density: float) -> int:
-    """Map PM2.5 µg/m3 density to HomeKit AirQuality level."""
+    """Map PM2.5 μg/m3 density to HomeKit AirQuality level."""
     if density <= 9:  # US AQI 0-50 (HomeKit: Excellent)
         return 1
     if density <= 35.4:  # US AQI 51-100 (HomeKit: Good)
@@ -491,7 +539,7 @@ def density_to_air_quality(density: float) -> int:
 
 
 def density_to_air_quality_pm10(density: float) -> int:
-    """Map PM10 µg/m3 density to HomeKit AirQuality level."""
+    """Map PM10 μg/m3 density to HomeKit AirQuality level."""
     if density <= 54:  # US AQI 0-50 (HomeKit: Excellent)
         return 1
     if density <= 154:  # US AQI 51-100 (HomeKit: Good)
@@ -504,7 +552,7 @@ def density_to_air_quality_pm10(density: float) -> int:
 
 
 def density_to_air_quality_nitrogen_dioxide(density: float) -> int:
-    """Map nitrogen dioxide µg/m3 to HomeKit AirQuality level."""
+    """Map nitrogen dioxide μg/m3 to HomeKit AirQuality level."""
     if density <= 30:
         return 1
     if density <= 60:
@@ -517,9 +565,10 @@ def density_to_air_quality_nitrogen_dioxide(density: float) -> int:
 
 
 def density_to_air_quality_voc(density: float) -> int:
-    """Map VOCs µg/m3 to HomeKit AirQuality level.
+    """Map VOCs μg/m3 to HomeKit AirQuality level.
 
-    The VOC mappings use the IAQ guidelines for Europe released by the WHO (World Health Organization).
+    The VOC mappings use the IAQ guidelines for Europe released
+    by the WHO (World Health Organization).
     Referenced from Sensirion_Gas_Sensors_SGP3x_TVOC_Concept.pdf
     https://github.com/paulvha/svm30/blob/master/extras/Sensirion_Gas_Sensors_SGP3x_TVOC_Concept.pdf
     """
@@ -609,10 +658,13 @@ def _get_test_socket() -> socket.socket:
 @callback
 def async_port_is_available(port: int) -> bool:
     """Check to see if a port is available."""
+    test_socket = _get_test_socket()
     try:
-        _get_test_socket().bind(("", port))
+        test_socket.bind(("", port))
     except OSError:
         return False
+    finally:
+        test_socket.close()
     return True
 
 
@@ -670,17 +722,21 @@ def accessory_friendly_name(hass_name: str, accessory: Accessory) -> str:
 
 
 def state_needs_accessory_mode(state: State) -> bool:
-    """Return if the entity represented by the state must be paired in accessory mode."""
+    """Return if the entity state must be paired in accessory mode."""
     if state.domain in (CAMERA_DOMAIN, LOCK_DOMAIN):
         return True
 
     return (
         state.domain == MEDIA_PLAYER_DOMAIN
-        and state.attributes.get(ATTR_DEVICE_CLASS)
-        in (MediaPlayerDeviceClass.TV, MediaPlayerDeviceClass.RECEIVER)
+        and state.attributes.get(EntityStateAttribute.DEVICE_CLASS)
+        in (
+            MediaPlayerDeviceClass.TV,
+            MediaPlayerDeviceClass.RECEIVER,
+            MediaPlayerDeviceClass.PROJECTOR,
+        )
     ) or (
         state.domain == REMOTE_DOMAIN
-        and state.attributes.get(ATTR_SUPPORTED_FEATURES, 0)
+        and state.attributes.get(EntityStateAttribute.SUPPORTED_FEATURES, 0)
         & RemoteEntityFeature.ACTIVITY
     )
 

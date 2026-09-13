@@ -1,7 +1,7 @@
 """Support for hive water heaters."""
 
 from datetime import timedelta
-from typing import Any
+from typing import Any, override
 
 import voluptuous as vol
 
@@ -52,7 +52,9 @@ async def async_setup_entry(
     hive = entry.runtime_data
     devices = hive.session.deviceList.get("water_heater")
     if devices:
-        async_add_entities((HiveWaterHeater(hive, dev) for dev in devices), True)
+        async_add_entities(
+            (HiveWaterHeater(hass, entry, hive, dev) for dev in devices), True
+        )
 
     platform = entity_platform.async_get_current_platform()
 
@@ -73,21 +75,26 @@ async def async_setup_entry(
 class HiveWaterHeater(HiveEntity, WaterHeaterEntity):
     """Hive Water Heater Device."""
 
-    _attr_supported_features = WaterHeaterEntityFeature.OPERATION_MODE
+    _attr_supported_features = (
+        WaterHeaterEntityFeature.ON_OFF | WaterHeaterEntityFeature.OPERATION_MODE
+    )
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_operation_list = SUPPORT_WATER_HEATER
 
     @refresh_system
+    @override
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on hotwater."""
         await self.hive.hotwater.setMode(self.device, "MANUAL")
 
     @refresh_system
+    @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn on hotwater."""
         await self.hive.hotwater.setMode(self.device, "OFF")
 
     @refresh_system
+    @override
     async def async_set_operation_mode(self, operation_mode: str) -> None:
         """Set operation mode."""
         new_mode = HASS_TO_HIVE_STATE[operation_mode]

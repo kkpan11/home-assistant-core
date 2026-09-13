@@ -1,11 +1,9 @@
 """Test SensorPush Cloud sensors."""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock
 
 import pytest
-from syrupy import SnapshotAssertion
+from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_registry import EntityRegistry

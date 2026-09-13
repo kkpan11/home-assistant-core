@@ -1,19 +1,16 @@
 """Config flow for Jewish calendar integration."""
 
-from __future__ import annotations
-
 import logging
-from typing import Any, get_args
+from typing import Any, get_args, override
 import zoneinfo
 
 from hdate.translator import Language
 import voluptuous as vol
 
 from homeassistant.config_entries import (
-    ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlow,
+    OptionsFlowWithReload,
 )
 from homeassistant.const import (
     CONF_ELEVATION,
@@ -31,19 +28,28 @@ from homeassistant.helpers.selector import (
     LocationSelector,
     SelectSelector,
     SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
     CONF_CANDLE_LIGHT_MINUTES,
+    CONF_DAILY_EVENTS,
     CONF_DIASPORA,
     CONF_HAVDALAH_OFFSET_MINUTES,
+    CONF_LEARNING_SCHEDULE,
+    CONF_YEARLY_EVENTS,
+    DEFAULT_CALENDAR_EVENTS,
     DEFAULT_CANDLE_LIGHT,
     DEFAULT_DIASPORA,
     DEFAULT_HAVDALAH_OFFSET_MINUTES,
     DEFAULT_LANGUAGE,
     DEFAULT_NAME,
     DOMAIN,
+    DailyCalendarEventType,
+    LearningScheduleEventType,
+    YearlyCalendarEventType,
 )
+from .entity import JewishCalendarConfigEntry
 
 OPTIONS_SCHEMA = vol.Schema(
     {
@@ -51,6 +57,39 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_HAVDALAH_OFFSET_MINUTES, default=DEFAULT_HAVDALAH_OFFSET_MINUTES
         ): int,
+        vol.Optional(
+            CONF_DAILY_EVENTS,
+            default=DEFAULT_CALENDAR_EVENTS[CONF_DAILY_EVENTS],
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=list(DailyCalendarEventType),
+                multiple=True,
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key=CONF_DAILY_EVENTS,
+            )
+        ),
+        vol.Optional(
+            CONF_LEARNING_SCHEDULE,
+            default=DEFAULT_CALENDAR_EVENTS[CONF_LEARNING_SCHEDULE],
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=list(LearningScheduleEventType),
+                multiple=True,
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key=CONF_LEARNING_SCHEDULE,
+            )
+        ),
+        vol.Optional(
+            CONF_YEARLY_EVENTS,
+            default=DEFAULT_CALENDAR_EVENTS[CONF_YEARLY_EVENTS],
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=list(YearlyCalendarEventType),
+                multiple=True,
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key=CONF_YEARLY_EVENTS,
+            )
+        ),
     }
 )
 
@@ -88,12 +127,14 @@ class JewishCalendarConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
+    @override
     def async_get_options_flow(
-        config_entry: ConfigEntry,
+        config_entry: JewishCalendarConfigEntry,
     ) -> JewishCalendarOptionsFlowHandler:
         """Get the options flow for this handler."""
         return JewishCalendarOptionsFlowHandler()
 
+    @override
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -128,7 +169,7 @@ class JewishCalendarConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_update_reload_and_abort(reconfigure_entry, data=user_input)
 
 
-class JewishCalendarOptionsFlowHandler(OptionsFlow):
+class JewishCalendarOptionsFlowHandler(OptionsFlowWithReload):
     """Handle Jewish Calendar options."""
 
     async def async_step_init(

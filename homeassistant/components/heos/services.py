@@ -9,7 +9,7 @@ import voluptuous as vol
 
 from homeassistant.components.media_player import ATTR_MEDIA_VOLUME_LEVEL
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import (
     config_validation as cv,
@@ -44,7 +44,8 @@ HEOS_SIGN_IN_SCHEMA = vol.Schema(
 HEOS_SIGN_OUT_SCHEMA = vol.Schema({})
 
 
-def register(hass: HomeAssistant) -> None:
+@callback
+def async_setup_services(hass: HomeAssistant) -> None:
     """Register HEOS services."""
     hass.services.async_register(
         DOMAIN,
@@ -132,7 +133,8 @@ def register_media_player_services() -> None:
 def _get_controller(hass: HomeAssistant) -> Heos:
     """Get the HEOS controller instance."""
     _LOGGER.warning(
-        "Actions 'heos.sign_in' and 'heos.sign_out' are deprecated and will be removed in the 2025.8.0 release"
+        "Actions 'heos.sign_in' and 'heos.sign_out' are deprecated"
+        " and will be removed in the 2025.8.0 release"
     )
     ir.async_create_issue(
         hass,
@@ -148,7 +150,7 @@ def _get_controller(hass: HomeAssistant) -> Heos:
         hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, DOMAIN)
     )
 
-    if not entry or not entry.state == ConfigEntryState.LOADED:
+    if not entry or entry.state is not ConfigEntryState.LOADED:
         raise HomeAssistantError(
             translation_domain=DOMAIN, translation_key="integration_not_loaded"
         )

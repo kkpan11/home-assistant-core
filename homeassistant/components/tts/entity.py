@@ -3,7 +3,7 @@
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, final
+from typing import Any, final, override
 
 from propcache.api import cached_property
 
@@ -11,7 +11,7 @@ from homeassistant.components.media_player import (
     ATTR_MEDIA_ANNOUNCE,
     ATTR_MEDIA_CONTENT_ID,
     ATTR_MEDIA_CONTENT_TYPE,
-    DOMAIN as DOMAIN_MP,
+    DOMAIN as MP_DOMAIN,
     SERVICE_PLAY_MEDIA,
     MediaType,
 )
@@ -63,6 +63,7 @@ class TextToSpeechEntity(RestoreEntity, cached_properties=CACHED_PROPERTIES_WITH
 
     @property
     @final
+    @override
     def state(self) -> str | None:
         """Return the state of the entity."""
         if self.__last_tts_loaded is None:
@@ -89,11 +90,11 @@ class TextToSpeechEntity(RestoreEntity, cached_properties=CACHED_PROPERTIES_WITH
         """Return a mapping with the default options."""
         return self._attr_default_options
 
-    @classmethod
-    def async_supports_streaming_input(cls) -> bool:
+    def async_supports_streaming_input(self) -> bool:
         """Return if the TTS engine supports streaming input."""
         return (
-            cls.async_stream_tts_audio is not TextToSpeechEntity.async_stream_tts_audio
+            self.__class__.async_stream_tts_audio
+            is not TextToSpeechEntity.async_stream_tts_audio
         )
 
     @callback
@@ -101,6 +102,7 @@ class TextToSpeechEntity(RestoreEntity, cached_properties=CACHED_PROPERTIES_WITH
         """Return a list of supported voices for a language."""
         return None
 
+    @override
     async def async_internal_added_to_hass(self) -> None:
         """Call when the entity is added to hass."""
         await super().async_internal_added_to_hass()
@@ -108,13 +110,17 @@ class TextToSpeechEntity(RestoreEntity, cached_properties=CACHED_PROPERTIES_WITH
             _ = self.default_language
         except AttributeError as err:
             raise AttributeError(
-                "TTS entities must either set the '_attr_default_language' attribute or override the 'default_language' property"
+                "TTS entities must either set the"
+                " '_attr_default_language' attribute or override"
+                " the 'default_language' property"
             ) from err
         try:
             _ = self.supported_languages
         except AttributeError as err:
             raise AttributeError(
-                "TTS entities must either set the '_attr_supported_languages' attribute or override the 'supported_languages' property"
+                "TTS entities must either set the"
+                " '_attr_supported_languages' attribute or"
+                " override the 'supported_languages' property"
             ) from err
         state = await self.async_get_last_state()
         if (
@@ -134,7 +140,7 @@ class TextToSpeechEntity(RestoreEntity, cached_properties=CACHED_PROPERTIES_WITH
     ) -> None:
         """Speak via a Media Player."""
         await self.hass.services.async_call(
-            DOMAIN_MP,
+            MP_DOMAIN,
             SERVICE_PLAY_MEDIA,
             {
                 ATTR_ENTITY_ID: media_player_entity_id,
@@ -190,6 +196,18 @@ class TextToSpeechEntity(RestoreEntity, cached_properties=CACHED_PROPERTIES_WITH
     ) -> TtsAudioType:
         """Load tts audio file from the engine."""
         raise NotImplementedError
+
+    @final
+    async def async_internal_get_tts_audio(
+        self, message: str, language: str, options: dict[str, Any]
+    ) -> TtsAudioType:
+        """Load tts audio file from the engine and update state.
+
+        Return a tuple of file extension and data as bytes.
+        """
+        self.__last_tts_loaded = dt_util.utcnow().isoformat()
+        self.async_write_ha_state()
+        return await self.async_get_tts_audio(message, language, options=options)
 
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any]

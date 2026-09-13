@@ -2,9 +2,10 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import override
 
 from pyHomee.const import AttributeType
-from pyHomee.model import HomeeAttribute
+from pyHomee.model import HomeeAttribute, HomeeNode
 
 from homeassistant.components.number import (
     NumberDeviceClass,
@@ -18,6 +19,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import HomeeConfigEntry
 from .const import HOMEE_UNIT_TO_HA_UNIT
 from .entity import HomeeEntity
+from .helpers import setup_homee_platform
 
 PARALLEL_UPDATES = 0
 
@@ -31,6 +33,22 @@ class HomeeNumberEntityDescription(NumberEntityDescription):
 
 
 NUMBER_DESCRIPTIONS = {
+    AttributeType.BUTTON_BRIGHTNESS_ACTIVE: HomeeNumberEntityDescription(
+        key="button_brightness_active",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    AttributeType.BUTTON_BRIGHTNESS_DIMMED: HomeeNumberEntityDescription(
+        key="button_brightness_dimmed",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    AttributeType.DISPLAY_BRIGHTNESS_ACTIVE: HomeeNumberEntityDescription(
+        key="display_brightness_active",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    AttributeType.DISPLAY_BRIGHTNESS_DIMMED: HomeeNumberEntityDescription(
+        key="display_brightness_dimmed",
+        entity_category=EntityCategory.CONFIG,
+    ),
     AttributeType.DOWN_POSITION: HomeeNumberEntityDescription(
         key="down_position",
         entity_category=EntityCategory.CONFIG,
@@ -46,6 +64,14 @@ NUMBER_DESCRIPTIONS = {
     ),
     AttributeType.ENDPOSITION_CONFIGURATION: HomeeNumberEntityDescription(
         key="endposition_configuration",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    AttributeType.EXTERNAL_TEMPERATURE_OFFSET: HomeeNumberEntityDescription(
+        key="external_temperature_offset",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    AttributeType.FLOOR_TEMPERATURE_OFFSET: HomeeNumberEntityDescription(
+        key="floor_temperature_offset",
         entity_category=EntityCategory.CONFIG,
     ),
     AttributeType.MOTION_ALARM_CANCELATION_DELAY: HomeeNumberEntityDescription(
@@ -83,6 +109,11 @@ NUMBER_DESCRIPTIONS = {
         key="temperature_offset",
         entity_category=EntityCategory.CONFIG,
     ),
+    AttributeType.TEMPERATURE_REPORT_INTERVAL: HomeeNumberEntityDescription(
+        key="temperature_report_interval",
+        device_class=NumberDeviceClass.DURATION,
+        entity_category=EntityCategory.CONFIG,
+    ),
     AttributeType.UP_TIME: HomeeNumberEntityDescription(
         key="up_time",
         device_class=NumberDeviceClass.DURATION,
@@ -107,18 +138,30 @@ NUMBER_DESCRIPTIONS = {
 }
 
 
+async def add_number_entities(
+    hass: HomeAssistant,
+    config_entry: HomeeConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    nodes: list[HomeeNode],
+) -> None:
+    """Add homee number entities."""
+    async_add_entities(
+        HomeeNumber(hass, attribute, config_entry, NUMBER_DESCRIPTIONS[attribute.type])
+        for node in nodes
+        for attribute in node.attributes
+        if attribute.type in NUMBER_DESCRIPTIONS and attribute.data != "fixed_value"
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: HomeeConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Add the Homee platform for the number component."""
+    """Add the homee platform for the number component."""
 
-    async_add_entities(
-        HomeeNumber(attribute, config_entry, NUMBER_DESCRIPTIONS[attribute.type])
-        for node in config_entry.runtime_data.nodes
-        for attribute in node.attributes
-        if attribute.type in NUMBER_DESCRIPTIONS and attribute.data != "fixed_value"
+    await setup_homee_platform(
+        hass, add_number_entities, async_add_entities, config_entry
     )
 
 
@@ -129,12 +172,13 @@ class HomeeNumber(HomeeEntity, NumberEntity):
 
     def __init__(
         self,
+        hass: HomeAssistant,
         attribute: HomeeAttribute,
         entry: HomeeConfigEntry,
         description: HomeeNumberEntityDescription,
     ) -> None:
         """Initialize a Homee number entity."""
-        super().__init__(attribute, entry)
+        super().__init__(hass, attribute, entry)
         self.entity_description = description
         self._attr_translation_key = description.key
         self._attr_native_unit_of_measurement = (
@@ -146,15 +190,18 @@ class HomeeNumber(HomeeEntity, NumberEntity):
         self._attr_native_step = description.native_step or attribute.step_value
 
     @property
+    @override
     def available(self) -> bool:
         """Return the availability of the entity."""
         return super().available and self._attribute.editable
 
     @property
+    @override
     def native_value(self) -> float | None:
         """Return the native value of the number."""
         return self.entity_description.native_value_fn(self._attribute.current_value)
 
+    @override
     async def async_set_native_value(self, value: float) -> None:
         """Set the selected value."""
         await self.async_set_homee_value(

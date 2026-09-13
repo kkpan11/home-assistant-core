@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from syrupy import SnapshotAssertion
+from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.components.netatmo import sensor
 from homeassistant.const import Platform
@@ -252,6 +252,6 @@ async def test_climate_battery_sensor(
 
         await hass.async_block_till_done()
 
-    prefix = "sensor.livingroom_"
+    prefix = "sensor.livingroom_livingroom_"
 
     assert hass.states.get(f"{prefix}battery").state == "75"

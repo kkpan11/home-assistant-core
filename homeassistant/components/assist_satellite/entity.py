@@ -4,11 +4,14 @@ from abc import abstractmethod
 import asyncio
 from collections.abc import AsyncIterable
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 import logging
-import time
-from typing import Any, Literal, final
+from typing import Any, Literal, final, override
+
+from hassil import Intents, recognize
+from hassil.expression import Expression, Group, ListReference
+from hassil.intents import WildcardSlotList
 
 from homeassistant.components import conversation, media_source, stt, tts
 from homeassistant.components.assist_pipeline import (
@@ -105,6 +108,20 @@ class AssistSatelliteAnnouncement:
     """Media ID to be played before announcement."""
 
 
+@dataclass
+class AssistSatelliteAnswer:
+    """Answer to a question."""
+
+    id: str | None
+    """Matched answer id or None if no answer was matched."""
+
+    sentence: str
+    """Raw sentence text from user response."""
+
+    slots: dict[str, Any] = field(default_factory=dict)
+    """Matched slots from answer."""
+
+
 class AssistSatelliteEntity(entity.Entity):
     """Entity encapsulating the state and functionality of an Assist satellite."""
 
@@ -122,11 +139,13 @@ class AssistSatelliteEntity(entity.Entity):
     _wake_word_intercept_future: asyncio.Future[str | None] | None = None
     _attr_tts_options: dict[str, Any] | None = None
     _pipeline_task: asyncio.Task | None = None
+    _ask_question_future: asyncio.Future[str | None] | None = None
 
     __assist_satellite_state = AssistSatelliteState.IDLE
 
     @final
     @property
+    @override
     def state(self) -> str | None:
         """Return state of the entity."""
         return self.__assist_satellite_state
@@ -272,7 +291,8 @@ class AssistSatelliteEntity(entity.Entity):
         self._is_announcing = True
         self._set_state(AssistSatelliteState.RESPONDING)
 
-        # Provide our start info to the LLM so it understands context of incoming message
+        # Provide our start info to the LLM so it understands
+        # context of incoming message
         if extra_system_prompt is not None:
             self._extra_system_prompt = extra_system_prompt
         else:
@@ -309,12 +329,120 @@ class AssistSatelliteEntity(entity.Entity):
         """Start a conversation from the satellite."""
         raise NotImplementedError
 
+    async def async_internal_ask_question(
+        self,
+        question: str | None = None,
+        question_media_id: str | None = None,
+        preannounce: bool = True,
+        preannounce_media_id: str = PREANNOUNCE_URL,
+        answers: list[dict[str, Any]] | None = None,
+    ) -> AssistSatelliteAnswer | None:
+        """Ask a question and get a user's response from the satellite.
+
+        If question_media_id is not provided, question is synthesized to audio
+        with the selected pipeline.
+
+        If question_media_id is provided, it is played directly. It is possible
+        to omit the message and the satellite will not show any text.
+
+        If preannounce is True, a sound is played before the start message or media.
+        If preannounce_media_id is provided, it overrides the default sound.
+
+        Calls async_start_conversation.
+        """
+        await self._cancel_running_pipeline()
+
+        if question is None:
+            question = ""
+
+        announcement = await self._resolve_announcement_media_id(
+            question,
+            question_media_id,
+            preannounce_media_id=preannounce_media_id if preannounce else None,
+        )
+
+        if self._is_announcing:
+            raise SatelliteBusyError
+
+        self._is_announcing = True
+        self._set_state(AssistSatelliteState.RESPONDING)
+        self._ask_question_future = asyncio.Future()
+
+        try:
+            # Wait for announcement to finish
+            await self.async_start_conversation(announcement)
+
+            # Wait for response text
+            response_text = await self._ask_question_future
+            if response_text is None:
+                raise HomeAssistantError("No answer from question")
+
+            if not answers:
+                return AssistSatelliteAnswer(id=None, sentence=response_text)
+
+            return self._question_response_to_answer(response_text, answers)
+        finally:
+            self._is_announcing = False
+            self._set_state(AssistSatelliteState.IDLE)
+            self._ask_question_future = None
+
+    def _question_response_to_answer(
+        self, response_text: str, answers: list[dict[str, Any]]
+    ) -> AssistSatelliteAnswer:
+        """Match text to a pre-defined set of answers."""
+
+        # Build intents and match
+        intents = Intents.from_dict(
+            {
+                "language": self.hass.config.language,
+                "intents": {
+                    "QuestionIntent": {
+                        "data": [
+                            {
+                                "sentences": answer["sentences"],
+                                "metadata": {"answer_id": answer["id"]},
+                            }
+                            for answer in answers
+                        ]
+                    }
+                },
+            }
+        )
+
+        # Assume slot list references are wildcards
+        wildcard_names: set[str] = set()
+        for intent in intents.intents.values():
+            for intent_data in intent.data:
+                for sentence in intent_data.sentences:
+                    _collect_list_references(sentence.expression, wildcard_names)
+
+        for wildcard_name in wildcard_names:
+            intents.slot_lists[wildcard_name] = WildcardSlotList(wildcard_name)
+
+        # Match response text
+        result = recognize(response_text, intents)
+        if result is None:
+            # No match
+            return AssistSatelliteAnswer(id=None, sentence=response_text)
+
+        assert result.intent_metadata
+        return AssistSatelliteAnswer(
+            id=result.intent_metadata["answer_id"],
+            sentence=response_text,
+            slots={
+                entity_name: entity.value
+                for entity_name, entity in result.entities.items()
+            },
+        )
+
     async def async_accept_pipeline_from_satellite(
         self,
         audio_stream: AsyncIterable[bytes],
         start_stage: PipelineStage = PipelineStage.STT,
         end_stage: PipelineStage = PipelineStage.TTS,
         wake_word_phrase: str | None = None,
+        *,
+        context: Context | None = None,
     ) -> None:
         """Triggers an Assist pipeline in Home Assistant from a satellite."""
         await self._cancel_running_pipeline()
@@ -351,17 +479,15 @@ class AssistSatelliteEntity(entity.Entity):
             self._internal_on_pipeline_event(PipelineEvent(PipelineEventType.RUN_END))
             return
 
+        if (self._ask_question_future is not None) and (
+            start_stage == PipelineStage.STT
+        ):
+            end_stage = PipelineStage.STT
+
         device_id = self.registry_entry.device_id if self.registry_entry else None
 
-        # Refresh context if necessary
-        if (
-            (self._context is None)
-            or (self._context_set is None)
-            or ((time.time() - self._context_set) > entity.CONTEXT_RECENT_TIME_SECONDS)
-        ):
-            self.async_set_context(Context())
-
-        assert self._context is not None
+        context = context or Context()
+        self.async_set_context(context)
 
         # Set entity state based on pipeline events
         self._run_has_tts = False
@@ -371,14 +497,15 @@ class AssistSatelliteEntity(entity.Entity):
         with chat_session.async_get_chat_session(
             self.hass, self._conversation_id
         ) as session:
-            # Store the conversation ID. If it is no longer valid, get_chat_session will reset it
+            # Store the conversation ID. If it is no longer valid,
+            # get_chat_session will reset it
             self._conversation_id = session.conversation_id
             self._pipeline_task = (
                 self.platform.config_entry.async_create_background_task(
                     self.hass,
                     async_pipeline_from_audio_stream(
                         self.hass,
-                        context=self._context,
+                        context=context,
                         event_callback=self._internal_on_pipeline_event,
                         stt_metadata=stt.SpeechMetadata(
                             language="",  # set in async_pipeline_from_audio_stream
@@ -392,6 +519,7 @@ class AssistSatelliteEntity(entity.Entity):
                         pipeline_id=self._resolve_pipeline(),
                         conversation_id=session.conversation_id,
                         device_id=device_id,
+                        satellite_id=self.entity_id,
                         tts_audio_output=self.tts_options,
                         wake_word_phrase=wake_word_phrase,
                         audio_settings=AudioSettings(
@@ -433,6 +561,16 @@ class AssistSatelliteEntity(entity.Entity):
                 self._set_state(AssistSatelliteState.IDLE)
         elif event.type is PipelineEventType.STT_START:
             self._set_state(AssistSatelliteState.LISTENING)
+        elif event.type is PipelineEventType.STT_END:
+            # Intercepting text for ask question
+            if (
+                (self._ask_question_future is not None)
+                and (not self._ask_question_future.done())
+                and event.data
+            ):
+                self._ask_question_future.set_result(
+                    event.data.get("stt_output", {}).get("text")
+                )
         elif event.type is PipelineEventType.INTENT_START:
             self._set_state(AssistSatelliteState.PROCESSING)
         elif event.type is PipelineEventType.TTS_START:
@@ -442,6 +580,12 @@ class AssistSatelliteEntity(entity.Entity):
         elif event.type is PipelineEventType.RUN_END:
             if not self._run_has_tts:
                 self._set_state(AssistSatelliteState.IDLE)
+
+            if (self._ask_question_future is not None) and (
+                not self._ask_question_future.done()
+            ):
+                # No text for ask question
+                self._ask_question_future.set_result(None)
 
         self.on_pipeline_event(event)
 
@@ -577,3 +721,15 @@ class AssistSatelliteEntity(entity.Entity):
             media_id_source=media_id_source,
             preannounce_media_id=preannounce_media_id,
         )
+
+
+def _collect_list_references(expression: Expression, list_names: set[str]) -> None:
+    """Collect list reference names recursively."""
+    if isinstance(expression, Group):
+        grp: Group = expression
+        for item in grp.items:
+            _collect_list_references(item, list_names)
+    elif isinstance(expression, ListReference):
+        # {list}
+        list_ref: ListReference = expression
+        list_names.add(list_ref.slot_name)

@@ -90,7 +90,7 @@ from .const import (
 from tests.common import (
     MockConfigEntry,
     async_fire_time_changed,
-    load_json_object_fixture,
+    async_load_json_object_fixture,
 )
 
 ENTITY_ID = f"{MP_DOMAIN}.mock_title"
@@ -409,7 +409,7 @@ async def test_update_ws_connection_failure(
         patch.object(
             remote_websocket,
             "start_listening",
-            side_effect=ConnectionFailure('{"event": "ms.voiceApp.hide"}'),
+            side_effect=ConnectionFailure({"event": "ms.voiceApp.hide"}),
         ),
         patch.object(remote_websocket, "is_alive", return_value=False),
     ):
@@ -419,8 +419,39 @@ async def test_update_ws_connection_failure(
 
     assert (
         "Unexpected ConnectionFailure trying to get remote for fake_host, please "
-        'report this issue: ConnectionFailure(\'{"event": "ms.voiceApp.hide"}\')'
+        "report this issue: ConnectionFailure({'event': 'ms.voiceApp.hide'})"
         in caplog.text
+    )
+
+    state = hass.states.get(ENTITY_ID)
+    assert state.state == STATE_OFF
+
+
+@pytest.mark.usefixtures("rest_api")
+async def test_update_ws_connection_failure_channel_timeout(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    remote_websocket: Mock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Testing update tv connection failure exception."""
+    await setup_samsungtv_entry(hass, MOCK_CONFIGWS)
+
+    with (
+        patch.object(
+            remote_websocket,
+            "start_listening",
+            side_effect=ConnectionFailure({"event": "ms.channel.timeOut"}),
+        ),
+        patch.object(remote_websocket, "is_alive", return_value=False),
+    ):
+        freezer.tick(timedelta(minutes=5))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert (
+        "Channel timeout occurred trying to get remote for fake_host: "
+        "ConnectionFailure({'event': 'ms.channel.timeOut'})" in caplog.text
     )
 
     state = hass.states.get(ENTITY_ID)
@@ -708,8 +739,8 @@ async def test_turn_off_websocket(
     hass: HomeAssistant, remote_websocket: Mock, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Test for turn_off."""
-    remote_websocket.app_list_data = load_json_object_fixture(
-        "ws_installed_app_event.json", DOMAIN
+    remote_websocket.app_list_data = await async_load_json_object_fixture(
+        hass, "ws_installed_app_event.json", DOMAIN
     )
     with patch(
         "homeassistant.components.samsungtv.bridge.Remote",
@@ -749,8 +780,8 @@ async def test_turn_off_websocket_frame(
     hass: HomeAssistant, remote_websocket: Mock, rest_api: Mock
 ) -> None:
     """Test for turn_off."""
-    rest_api.rest_device_info.return_value = load_json_object_fixture(
-        "device_info_UE43LS003.json", DOMAIN
+    rest_api.rest_device_info.return_value = await async_load_json_object_fixture(
+        hass, "device_info_UE43LS003.json", DOMAIN
     )
     with patch(
         "homeassistant.components.samsungtv.bridge.Remote",
@@ -1069,43 +1100,35 @@ async def test_play_media_invalid_type(hass: HomeAssistant) -> None:
         assert remote.control.call_count == 0
 
 
-async def test_play_media_channel_as_string(hass: HomeAssistant) -> None:
+@pytest.mark.parametrize(
+    ("content_id"),
+    [
+        "https://example.com",
+        "-4",
+    ],
+)
+async def test_play_media_content_invalid_id(
+    hass: HomeAssistant, content_id: str
+) -> None:
     """Test for play_media with invalid channel as string."""
     with patch("homeassistant.components.samsungtv.bridge.Remote") as remote:
-        url = "https://example.com"
         await setup_samsungtv_entry(hass, ENTRYDATA_LEGACY)
         remote.reset_mock()
-        await hass.services.async_call(
-            MP_DOMAIN,
-            SERVICE_PLAY_MEDIA,
-            {
-                ATTR_ENTITY_ID: ENTITY_ID,
-                ATTR_MEDIA_CONTENT_TYPE: MediaType.CHANNEL,
-                ATTR_MEDIA_CONTENT_ID: url,
-            },
-            True,
-        )
+        with pytest.raises(HomeAssistantError) as err:
+            await hass.services.async_call(
+                MP_DOMAIN,
+                SERVICE_PLAY_MEDIA,
+                {
+                    ATTR_ENTITY_ID: ENTITY_ID,
+                    ATTR_MEDIA_CONTENT_TYPE: MediaType.CHANNEL,
+                    ATTR_MEDIA_CONTENT_ID: content_id,
+                },
+                True,
+            )
         # control not called
         assert remote.control.call_count == 0
-
-
-async def test_play_media_channel_as_non_positive(hass: HomeAssistant) -> None:
-    """Test for play_media with invalid channel as non positive integer."""
-    with patch("homeassistant.components.samsungtv.bridge.Remote") as remote:
-        await setup_samsungtv_entry(hass, ENTRYDATA_LEGACY)
-        remote.reset_mock()
-        await hass.services.async_call(
-            MP_DOMAIN,
-            SERVICE_PLAY_MEDIA,
-            {
-                ATTR_ENTITY_ID: ENTITY_ID,
-                ATTR_MEDIA_CONTENT_TYPE: MediaType.CHANNEL,
-                ATTR_MEDIA_CONTENT_ID: "-4",
-            },
-            True,
-        )
-        # control not called
-        assert remote.control.call_count == 0
+        assert err.value.translation_domain == DOMAIN
+        assert err.value.translation_key == "media_id_invalid"
 
 
 async def test_select_source(hass: HomeAssistant, remote_legacy: Mock) -> None:
@@ -1173,8 +1196,8 @@ async def test_play_media_app(hass: HomeAssistant, remote_websocket: Mock) -> No
 @pytest.mark.usefixtures("rest_api")
 async def test_select_source_app(hass: HomeAssistant, remote_websocket: Mock) -> None:
     """Test for select_source."""
-    remote_websocket.app_list_data = load_json_object_fixture(
-        "ws_installed_app_event.json", DOMAIN
+    remote_websocket.app_list_data = await async_load_json_object_fixture(
+        hass, "ws_installed_app_event.json", DOMAIN
     )
     await setup_samsungtv_entry(hass, MOCK_CONFIGWS)
     remote_websocket.send_commands.reset_mock()
@@ -1301,7 +1324,7 @@ async def test_upnp_not_available(
     assert "Upnp services are not available" in caplog.text
 
 
-@pytest.mark.usefixtures("remote_websocket", "rest_api", "upnp_factory")
+@pytest.mark.usefixtures("remote_websocket", "rest_api")
 async def test_upnp_missing_service(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 import logging
-from typing import Any
+from typing import Any, override
 
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
@@ -22,17 +22,10 @@ class OAuth2FlowHandler(
     DOMAIN = DOMAIN
 
     @property
+    @override
     def logger(self) -> logging.Logger:
         """Return logger."""
         return logging.getLogger(__name__)
-
-    @property
-    def extra_authorize_data(self) -> dict:
-        """Extra data that needs to be appended to the authorize url."""
-        # "vg" is mandatory but the value doesn't seem to matter
-        return {
-            "vg": "sv-SE",
-        }
 
     async def async_step_reauth(
         self, entry_data: Mapping[str, Any]
@@ -58,6 +51,7 @@ class OAuth2FlowHandler(
         """User initiated reconfiguration."""
         return await self.async_step_user()
 
+    @override
     async def async_oauth_create_entry(self, data: dict) -> ConfigFlowResult:
         """Create or update the config entry."""
 

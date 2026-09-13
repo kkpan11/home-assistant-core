@@ -1,5 +1,7 @@
 """Base class for Squeezebox Sensor entities."""
 
+from typing import override
+
 from homeassistant.helpers.device_registry import (
     CONNECTION_NETWORK_MAC,
     DeviceInfo,
@@ -26,12 +28,20 @@ class SqueezeboxEntity(CoordinatorEntity[SqueezeBoxPlayerUpdateCoordinator]):
         self._player = coordinator.player
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, format_mac(self._player.player_id))},
-            name=self._player.name,
-            connections={(CONNECTION_NETWORK_MAC, format_mac(self._player.player_id))},
-            via_device=(DOMAIN, coordinator.server_uuid),
-            model=self._player.model,
-            manufacturer=self._player.creator,
+            connections={(CONNECTION_NETWORK_MAC, self._player.player_id)},
         )
+
+    @property
+    @override
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        # super().available refers to
+        # CoordinatorEntity.available
+        # (self.coordinator.last_update_success).
+        # self.coordinator.available is the custom
+        # availability flag from
+        # SqueezeBoxPlayerUpdateCoordinator
+        return self.coordinator.available and super().available
 
 
 class LMSStatusEntity(CoordinatorEntity[LMSStatusDataUpdateCoordinator]):

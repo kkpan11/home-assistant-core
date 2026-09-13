@@ -1,11 +1,9 @@
 """Platform for Miele vacuum integration."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import IntEnum
 import logging
-from typing import Any, Final
+from typing import Any, Final, override
 
 from aiohttp import ClientResponseError
 from pymiele import MieleEnum
@@ -29,8 +27,9 @@ PARALLEL_UPDATES = 1
 _LOGGER = logging.getLogger(__name__)
 
 # The following const classes define program speeds and programs for the vacuum cleaner.
-# Miele have used the same and overlapping names for fan_speeds and programs even
-# if the contexts are different. This is an attempt to make it clearer in the integration.
+# Miele have used the same and overlapping names for
+# fan_speeds and programs even if the contexts are different.
+# This is an attempt to make it clearer in the integration.
 
 
 class FanSpeed(IntEnum):
@@ -64,7 +63,7 @@ PROGRAM_TO_SPEED: dict[int, str] = {
 }
 
 
-class MieleVacuumStateCode(MieleEnum):
+class MieleVacuumStateCode(MieleEnum, missing_to_none=True):
     """Define vacuum state codes."""
 
     idle = 0
@@ -82,12 +81,10 @@ class MieleVacuumStateCode(MieleEnum):
     blocked_front_wheel = 5900
     docked = 5903, 5904
     remote_controlled = 5910
-    missing2none = -9999
 
 
 SUPPORTED_FEATURES = (
     VacuumEntityFeature.STATE
-    | VacuumEntityFeature.BATTERY
     | VacuumEntityFeature.FAN_SPEED
     | VacuumEntityFeature.START
     | VacuumEntityFeature.STOP
@@ -130,7 +127,7 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the vacuum platform."""
-    coordinator = config_entry.runtime_data
+    coordinator = config_entry.runtime_data.coordinator
 
     async_add_entities(
         MieleVacuum(coordinator, device_id, definition.description)
@@ -141,21 +138,21 @@ async def async_setup_entry(
 
 
 VACUUM_PHASE_TO_ACTIVITY = {
-    MieleVacuumStateCode.idle: VacuumActivity.IDLE,
-    MieleVacuumStateCode.docked: VacuumActivity.DOCKED,
-    MieleVacuumStateCode.cleaning: VacuumActivity.CLEANING,
-    MieleVacuumStateCode.going_to_target_area: VacuumActivity.CLEANING,
-    MieleVacuumStateCode.returning: VacuumActivity.RETURNING,
-    MieleVacuumStateCode.wheel_lifted: VacuumActivity.ERROR,
-    MieleVacuumStateCode.dirty_sensors: VacuumActivity.ERROR,
-    MieleVacuumStateCode.dust_box_missing: VacuumActivity.ERROR,
-    MieleVacuumStateCode.blocked_drive_wheels: VacuumActivity.ERROR,
-    MieleVacuumStateCode.blocked_brushes: VacuumActivity.ERROR,
-    MieleVacuumStateCode.check_dust_box_and_filter: VacuumActivity.ERROR,
-    MieleVacuumStateCode.internal_fault_reboot: VacuumActivity.ERROR,
-    MieleVacuumStateCode.blocked_front_wheel: VacuumActivity.ERROR,
-    MieleVacuumStateCode.paused: VacuumActivity.PAUSED,
-    MieleVacuumStateCode.remote_controlled: VacuumActivity.PAUSED,
+    MieleVacuumStateCode.idle.value: VacuumActivity.IDLE,
+    MieleVacuumStateCode.docked.value: VacuumActivity.DOCKED,
+    MieleVacuumStateCode.cleaning.value: VacuumActivity.CLEANING,
+    MieleVacuumStateCode.going_to_target_area.value: VacuumActivity.CLEANING,
+    MieleVacuumStateCode.returning.value: VacuumActivity.RETURNING,
+    MieleVacuumStateCode.wheel_lifted.value: VacuumActivity.ERROR,
+    MieleVacuumStateCode.dirty_sensors.value: VacuumActivity.ERROR,
+    MieleVacuumStateCode.dust_box_missing.value: VacuumActivity.ERROR,
+    MieleVacuumStateCode.blocked_drive_wheels.value: VacuumActivity.ERROR,
+    MieleVacuumStateCode.blocked_brushes.value: VacuumActivity.ERROR,
+    MieleVacuumStateCode.check_dust_box_and_filter.value: VacuumActivity.ERROR,
+    MieleVacuumStateCode.internal_fault_reboot.value: VacuumActivity.ERROR,
+    MieleVacuumStateCode.blocked_front_wheel.value: VacuumActivity.ERROR,
+    MieleVacuumStateCode.paused.value: VacuumActivity.PAUSED,
+    MieleVacuumStateCode.remote_controlled.value: VacuumActivity.PAUSED,
 }
 
 
@@ -168,59 +165,63 @@ class MieleVacuum(MieleEntity, StateVacuumEntity):
     _attr_name = None
 
     @property
+    @override
     def activity(self) -> VacuumActivity | None:
         """Return activity."""
         return VACUUM_PHASE_TO_ACTIVITY.get(
-            MieleVacuumStateCode(self.device.state_program_phase)
+            MieleVacuumStateCode(self.device.state_program_phase).value
         )
 
     @property
-    def battery_level(self) -> int | None:
-        """Return the battery level."""
-        return self.device.state_battery_level
-
-    @property
+    @override
     def fan_speed(self) -> str | None:
         """Return the fan speed."""
         return PROGRAM_TO_SPEED.get(self.device.state_program_id)
 
     @property
+    @override
     def available(self) -> bool:
         """Return the availability of the entity."""
 
-        return (
+        return super().available and (
             self.action.power_off_enabled or self.action.power_on_enabled
-        ) and super().available
+        )
 
     async def send(self, device_id: str, action: dict[str, Any]) -> None:
         """Send action to the device."""
         try:
             await self.api.send_action(device_id, action)
-        except ClientResponseError as ex:
+        except ClientResponseError as err:
+            _LOGGER.debug("Error setting vacuum state for %s: %s", self.entity_id, err)
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="set_state_error",
                 translation_placeholders={
                     "entity": self.entity_id,
                 },
-            ) from ex
+            ) from err
 
+    @override
     async def async_clean_spot(self, **kwargs: Any) -> None:
         """Clean spot."""
         await self.send(self._device_id, {PROGRAM_ID: FanProgram.spot})
 
+    @override
     async def async_start(self, **kwargs: Any) -> None:
         """Start cleaning."""
         await self.send(self._device_id, {PROCESS_ACTION: MieleActions.START})
 
+    @override
     async def async_stop(self, **kwargs: Any) -> None:
         """Stop cleaning."""
         await self.send(self._device_id, {PROCESS_ACTION: MieleActions.STOP})
 
+    @override
     async def async_pause(self, **kwargs: Any) -> None:
         """Pause cleaning."""
         await self.send(self._device_id, {PROCESS_ACTION: MieleActions.PAUSE})
 
+    @override
     async def async_set_fan_speed(self, fan_speed: str, **kwargs: Any) -> None:
         """Set fan speed."""
         await self.send(self._device_id, {PROGRAM_ID: PROGRAM_MAP[fan_speed]})

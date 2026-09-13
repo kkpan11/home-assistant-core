@@ -1,10 +1,8 @@
 """Config flow for Whirlpool Appliances integration."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 import logging
-from typing import Any
+from typing import Any, override
 
 from aiohttp import ClientError
 import voluptuous as vol
@@ -57,7 +55,7 @@ async def authenticate(
         await auth.do_auth()
     except WhirlpoolAccountLocked:
         return "account_locked"
-    except (TimeoutError, ClientError):
+    except TimeoutError, ClientError:
         return "cannot_connect"
     except Exception:
         _LOGGER.exception("Unexpected exception")
@@ -68,9 +66,17 @@ async def authenticate(
 
     if check_appliances_exist:
         appliances_manager = AppliancesManager(backend_selector, auth, session)
-        await appliances_manager.fetch_appliances()
+        if not await appliances_manager.connect():
+            return "cannot_connect"
+        await appliances_manager.disconnect()
 
-        if not appliances_manager.aircons and not appliances_manager.washer_dryers:
+        if (
+            not appliances_manager.aircons
+            and not appliances_manager.washers
+            and not appliances_manager.dryers
+            and not appliances_manager.ovens
+            and not appliances_manager.refrigerators
+        ):
             return "no_appliances"
 
     return None
@@ -111,6 +117,7 @@ class WhirlpoolConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"name": "Whirlpool"},
         )
 
+    @override
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
         """Handle the initial step."""
         if user_input is None:

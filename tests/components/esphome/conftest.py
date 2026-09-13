@@ -1,7 +1,5 @@
 """esphome session fixtures."""
 
-from __future__ import annotations
-
 import asyncio
 from asyncio import Event
 from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
@@ -10,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from aioesphomeapi import (
+    ZERO_NOISE_PSK,
     APIClient,
     APIVersion,
     BluetoothProxyFeature,
@@ -18,6 +17,7 @@ from aioesphomeapi import (
     EntityState,
     HomeassistantServiceCall,
     LogLevel,
+    OutgoingConnectionServer,
     ReconnectLogic,
     UserService,
     VoiceAssistantAnnounceFinished,
@@ -54,9 +54,9 @@ class MockGenericDeviceEntryType(Protocol):
     async def __call__(
         self,
         mock_client: APIClient,
-        entity_info: list[EntityInfo],
-        user_service: list[UserService],
-        states: list[EntityState],
+        entity_info: list[EntityInfo] | None = ...,
+        user_service: list[UserService] | None = ...,
+        states: list[EntityState] | None = ...,
         mock_storage: bool = ...,
     ) -> MockConfigEntry:
         """Mock an ESPHome device entry."""
@@ -94,6 +94,21 @@ _ONE_SECOND = 16000 * 2  # 16Khz 16-bit
 @pytest.fixture(autouse=True)
 def mock_bluetooth(enable_bluetooth: None) -> None:
     """Auto mock bluetooth."""
+
+
+@pytest.fixture(autouse=True)
+def mock_outgoing_connection_server() -> Generator[MagicMock]:
+    """Patch the shared dial-in listener so tests never bind a real socket."""
+    server = MagicMock(spec=OutgoingConnectionServer)
+    # A real unregister callback returns None
+    server.register.return_value.return_value = None
+    with patch(
+        "homeassistant.components.esphome.outgoing_connection.OutgoingConnectionServer",
+        return_value=server,
+    ) as server_class:
+        # Tests assert the singleton builds exactly one server
+        server.constructor = server_class
+        yield server
 
 
 @pytest.fixture(autouse=True)
@@ -187,13 +202,22 @@ def mock_client(mock_device_info) -> Generator[APIClient]:
         zeroconf_instance: Zeroconf = None,
         noise_psk: str | None = None,
         expected_name: str | None = None,
-    ):
+        timezone: str | None = None,
+        outgoing_connection_target: bool = False,
+    ) -> None:
         """Fake the client constructor."""
         mock_client.host = address
         mock_client.port = port
         mock_client.password = password
         mock_client.zeroconf_instance = zeroconf_instance
         mock_client.noise_psk = noise_psk
+        mock_client.timezone = timezone
+        # Mirror the real constructor's gate on a real key
+        mock_client.outgoing_connection_target = (
+            outgoing_connection_target
+            and bool(noise_psk)
+            and noise_psk != ZERO_NOISE_PSK
+        )
         return mock_client
 
     mock_client.side_effect = mock_constructor
@@ -210,7 +234,7 @@ def mock_client(mock_device_info) -> Generator[APIClient]:
             "homeassistant.components.esphome.manager.ReconnectLogic",
             BaseMockReconnectLogic,
         ),
-        patch("homeassistant.components.esphome.APIClient", mock_client),
+        patch("homeassistant.components.esphome.manager.APIClient", mock_client),
         patch("homeassistant.components.esphome.config_flow.APIClient", mock_client),
     ):
         yield mock_client
@@ -234,11 +258,16 @@ class MockESPHomeDevice:
     """Mock an esphome device."""
 
     def __init__(
-        self, entry: MockConfigEntry, client: APIClient, device_info: DeviceInfo
+        self,
+        entry: MockConfigEntry,
+        client: APIClient,
+        device_info: DeviceInfo,
+        states: list[EntityState],
     ) -> None:
         """Init the mock."""
         self.entry = entry
         self.client = client
+        self.states = states
         self.state_callback: Callable[[EntityState], None]
         self.service_call_callback: Callable[[HomeassistantServiceCall], None]
         self.on_disconnect: Callable[[bool], None]
@@ -449,13 +478,7 @@ async def _mock_generic_device_entry(
             },
         }
 
-    mock_device = MockESPHomeDevice(entry, mock_client, device_info)
-
-    def _subscribe_states(callback: Callable[[EntityState], None]) -> None:
-        """Subscribe to state."""
-        mock_device.set_state_callback(callback)
-        for state in states:
-            callback(state)
+    mock_device = MockESPHomeDevice(entry, mock_client, device_info, states)
 
     def _subscribe_service_calls(
         callback: Callable[[HomeassistantServiceCall], None],
@@ -517,9 +540,30 @@ async def _mock_generic_device_entry(
     mock_client.list_entities_services = AsyncMock(
         return_value=mock_list_entities_services
     )
-    mock_client.subscribe_states = _subscribe_states
-    mock_client.subscribe_service_calls = _subscribe_service_calls
-    mock_client.subscribe_home_assistant_states = _subscribe_home_assistant_states
+    mock_client.device_info_and_list_entities = AsyncMock(
+        return_value=(mock_device.device_info, *mock_list_entities_services)
+    )
+
+    def _subscribe_home_assistant_states_and_services(
+        *,
+        on_state: Callable[[EntityState], None],
+        on_service_call: Callable[[HomeassistantServiceCall], None],
+        on_state_sub: Callable[[str, str | None], None],
+        on_state_request: Callable[[str, str | None], None],
+    ) -> None:
+        """Subscribe to states and service calls."""
+        mock_device.set_state_callback(on_state)
+        mock_device.set_service_call_callback(on_service_call)
+        mock_device.set_home_assistant_state_subscription_callback(
+            on_state_sub, on_state_request
+        )
+        # Set the initial states
+        for state in mock_device.states:
+            on_state(state)
+
+    mock_client.subscribe_home_assistant_states_and_services = (
+        _subscribe_home_assistant_states_and_services
+    )
     mock_client.subscribe_logs = _subscribe_logs
 
     try_connect_done = Event()
@@ -537,9 +581,10 @@ async def _mock_generic_device_entry(
 
         async def mock_try_connect(self):
             """Set an event when ReconnectLogic._try_connect has been awaited."""
-            result = await super()._try_connect()
-            try_connect_done.set()
-            return result
+            try:
+                return await super()._try_connect()
+            finally:
+                try_connect_done.set()
 
         def stop_callback(self) -> None:
             """Stop the reconnect logic."""
@@ -685,9 +730,9 @@ async def mock_generic_device_entry(
 
     async def _mock_device_entry(
         mock_client: APIClient,
-        entity_info: list[EntityInfo],
-        user_service: list[UserService],
-        states: list[EntityState],
+        entity_info: list[EntityInfo] | None = None,
+        user_service: list[UserService] | None = None,
+        states: list[EntityState] | None = None,
         mock_storage: bool = False,
     ) -> MockConfigEntry:
         return (
@@ -695,8 +740,8 @@ async def mock_generic_device_entry(
                 hass,
                 mock_client,
                 {},
-                (entity_info, user_service),
-                states,
+                (entity_info or [], user_service or []),
+                states or [],
                 None,
                 hass_storage if mock_storage else None,
             )
@@ -732,3 +777,22 @@ async def mock_esphome_device(
         )
 
     return _mock_device
+
+
+async def reconnect_with_updated_entity_info(
+    hass: HomeAssistant,
+    device: MockESPHomeDevice,
+    entity_info: list[EntityInfo],
+    states: list[EntityState] | None = None,
+) -> None:
+    """Reconnect the mock device with updated entity info."""
+    mock_client = device.client
+    mock_client.list_entities_services = AsyncMock(return_value=(entity_info, []))
+    mock_client.device_info_and_list_entities = AsyncMock(
+        return_value=(device.device_info, entity_info, [])
+    )
+    if states is not None:
+        device.states = states
+    await device.mock_disconnect(expected_disconnect=False)
+    await device.mock_connect()
+    await hass.async_block_till_done()

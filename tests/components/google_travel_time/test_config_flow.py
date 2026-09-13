@@ -2,7 +2,12 @@
 
 from unittest.mock import AsyncMock, patch
 
-from google.api_core.exceptions import GatewayTimeout, GoogleAPIError, Unauthorized
+from google.api_core.exceptions import (
+    GatewayTimeout,
+    GoogleAPIError,
+    PermissionDenied,
+    Unauthorized,
+)
 import pytest
 
 from homeassistant.components.google_travel_time.const import (
@@ -24,7 +29,7 @@ from homeassistant.components.google_travel_time.const import (
     UNITS_IMPERIAL,
 )
 from homeassistant.config_entries import SOURCE_USER, ConfigFlowResult
-from homeassistant.const import CONF_API_KEY, CONF_LANGUAGE, CONF_MODE, CONF_NAME
+from homeassistant.const import CONF_API_KEY, CONF_LANGUAGE, CONF_MODE
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
@@ -58,6 +63,7 @@ async def assert_common_reconfigure_steps(
         await hass.async_block_till_done()
 
         entry = hass.config_entries.async_entries(DOMAIN)[0]
+        assert entry.title == DEFAULT_NAME
         assert entry.data == RECONFIGURE_CONFIG
 
 
@@ -72,7 +78,6 @@ async def assert_common_create_steps(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == DEFAULT_NAME
     assert result["data"] == {
-        CONF_NAME: DEFAULT_NAME,
         CONF_API_KEY: "api_key",
         CONF_ORIGIN: "location1",
         CONF_DESTINATION: "49.983862755708444,8.223882827079068",
@@ -98,6 +103,14 @@ async def test_minimum_fields(hass: HomeAssistant) -> None:
         (GoogleAPIError("test"), "cannot_connect"),
         (GatewayTimeout("Timeout error."), "timeout_connect"),
         (Unauthorized("Invalid API key."), "invalid_auth"),
+        (
+            PermissionDenied(
+                "Requests to this API routes.googleapis.com method"
+                " google.maps.routing.v2.Routes.ComputeRoutes"
+                " are blocked."
+            ),
+            "permission_denied",
+        ),
     ],
 )
 async def test_errors(

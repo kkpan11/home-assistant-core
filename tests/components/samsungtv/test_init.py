@@ -31,7 +31,7 @@ from .const import (
     MOCK_SSDP_DATA_RENDERING_CONTROL_ST,
 )
 
-from tests.common import MockConfigEntry, load_json_object_fixture
+from tests.common import MockConfigEntry, async_load_json_object_fixture
 
 
 @pytest.mark.parametrize(
@@ -65,8 +65,8 @@ async def test_setup_h_j_model(
     hass: HomeAssistant, rest_api: Mock, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Test Samsung TV integration is setup."""
-    rest_api.rest_device_info.return_value = load_json_object_fixture(
-        "device_info_UE48JU6400.json", DOMAIN
+    rest_api.rest_device_info.return_value = await async_load_json_object_fixture(
+        hass, "device_info_UE48JU6400.json", DOMAIN
     )
     entry = await setup_samsungtv_entry(
         hass, {**ENTRYDATA_WEBSOCKET, CONF_MODEL: "UE48JU6400"}
@@ -77,11 +77,11 @@ async def test_setup_h_j_model(
     assert "H and J series use an encrypted protocol" in caplog.text
 
 
-@pytest.mark.usefixtures("remote_websocket")
+@pytest.mark.usefixtures("remote_websocket", "rest_api")
 async def test_setup_updates_from_ssdp(hass: HomeAssistant) -> None:
     """Test setting up the entry fetches data from ssdp cache."""
     entry = MockConfigEntry(
-        domain="samsungtv", data=ENTRYDATA_WEBSOCKET, entry_id="sample-entry-id"
+        domain=DOMAIN, data=ENTRYDATA_WEBSOCKET, entry_id="sample-entry-id"
     )
     entry.add_to_hass(hass)
 
@@ -140,3 +140,21 @@ async def test_incorrectly_formatted_mac_fixed(hass: HomeAssistant) -> None:
     config_entries = hass.config_entries.async_entries(DOMAIN)
     assert len(config_entries) == 1
     assert config_entries[0].data[CONF_MAC] == "aa:bb:aa:aa:aa:aa"
+
+
+async def test_migrate_future_version_returns_false(
+    hass: HomeAssistant,
+) -> None:
+    """Test migration failure for downgraded future config entry version."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=ENTRYDATA_WEBSOCKET,
+        entry_id="sample-entry-id",
+        version=3,
+        minor_version=0,
+    )
+    entry.add_to_hass(hass)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR

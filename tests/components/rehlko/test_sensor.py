@@ -1,13 +1,11 @@
 """Tests for the Rehlko sensors."""
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
-from syrupy import SnapshotAssertion
+from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.components.rehlko.coordinator import SCAN_INTERVAL_MINUTES
 from homeassistant.const import STATE_UNAVAILABLE, Platform

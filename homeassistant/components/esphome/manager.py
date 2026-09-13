@@ -1,36 +1,46 @@
 """Manager for esphome devices."""
 
-from __future__ import annotations
-
 import asyncio
+import base64
 from functools import partial
+import json
 import logging
-import re
-from typing import TYPE_CHECKING, Any, NamedTuple
+import secrets
+import struct
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from aioesphomeapi import (
+    ZERO_NOISE_PSK,
     APIClient,
     APIConnectionError,
     APIVersion,
     DeviceInfo as EsphomeDeviceInfo,
     EncryptionPlaintextAPIError,
-    EntityInfo,
+    ExecuteServiceResponse,
     HomeassistantServiceCall,
     InvalidAuthAPIError,
     InvalidEncryptionKeyAPIError,
     LogLevel,
     ReconnectLogic,
     RequiresEncryptionAPIError,
+    SupportsResponseType,
     UserService,
     UserServiceArgType,
+    ZWaveProxyRequest,
+    ZWaveProxyRequestType,
+    parse_log_message,
 )
+import aiohttp
 from awesomeversion import AwesomeVersion
 import voluptuous as vol
 
 from homeassistant.components import bluetooth, tag, zeroconf
 from homeassistant.const import (
     ATTR_DEVICE_ID,
+    CONF_HOST,
     CONF_MODE,
+    CONF_PASSWORD,
+    CONF_PORT,
     EVENT_HOMEASSISTANT_CLOSE,
     EVENT_LOGGING_CHANGED,
     Platform,
@@ -41,15 +51,23 @@ from homeassistant.core import (
     EventStateChangedData,
     HomeAssistant,
     ServiceCall,
+    ServiceResponse,
     State,
+    SupportsResponse,
     callback,
 )
-from homeassistant.exceptions import HomeAssistantError, TemplateError
+from homeassistant.exceptions import (
+    HomeAssistantError,
+    ServiceNotFound,
+    ServiceValidationError,
+    TemplateError,
+)
 from homeassistant.helpers import (
     config_validation as cv,
     device_registry as dr,
     entity_registry as er,
     issue_registry as ir,
+    json as json_helper,
     template,
 )
 from homeassistant.helpers.device_registry import format_mac
@@ -61,13 +79,15 @@ from homeassistant.helpers.issue_registry import (
 )
 from homeassistant.helpers.service import async_set_service_schema
 from homeassistant.helpers.template import Template
-from homeassistant.util.async_ import create_eager_task
+from homeassistant.util.json import json_loads_object
 
 from .bluetooth import async_connect_scanner
 from .const import (
+    CLIENT_INFO,
     CONF_ALLOW_SERVICE_CALLS,
     CONF_BLUETOOTH_MAC_ADDRESS,
     CONF_DEVICE_NAME,
+    CONF_NOISE_PSK,
     CONF_SUBSCRIBE_LOGS,
     DEFAULT_ALLOW_SERVICE_CALLS,
     DEFAULT_URL,
@@ -78,19 +98,65 @@ from .const import (
 )
 from .dashboard import async_get_dashboard
 from .domain_data import DomainData
+from .encryption_key_storage import async_get_encryption_key_storage
 
 # Import config flow so that it's added to the registry
 from .entry_data import ESPHomeConfigEntry, RuntimeEntryData
+from .enum_mapper import EsphomeEnumMapper
+from .outgoing_connection import async_register_outgoing_target
 
 DEVICE_CONFLICT_ISSUE_FORMAT = "device_conflict-{}"
+UNPACK_UINT32_BE = struct.Struct(">I").unpack_from
 
-if TYPE_CHECKING:
-    from aioesphomeapi.api_pb2 import (  # type: ignore[attr-defined]
-        SubscribeLogsResponse,
+
+@callback
+def _mac_unique_id(entry: ESPHomeConfigEntry) -> str | None:
+    """Dial-in routing is keyed by MAC; pre-2023 name unique ids have none."""
+    if (unique_id := entry.unique_id) is not None and ":" in unique_id:
+        return unique_id
+    return None
+
+
+@callback
+def async_create_api_client(
+    hass: HomeAssistant,
+    entry: ESPHomeConfigEntry,
+    zeroconf_instance: zeroconf.HaZeroconf,
+    *,
+    noise_psk: str | None,
+    declare_outgoing_target: bool = False,
+) -> APIClient:
+    """Create an APIClient for a config entry.
+
+    Only the entry's long-lived session declares itself a dial-back target;
+    key management sessions must never be remembered by the device.
+    """
+    return APIClient(
+        entry.data[CONF_HOST],
+        entry.data[CONF_PORT],
+        entry.data[CONF_PASSWORD],
+        client_info=CLIENT_INFO,
+        zeroconf_instance=zeroconf_instance,
+        noise_psk=noise_psk,
+        timezone=hass.config.time_zone,
+        # The library drops the declaration without a real key; the MAC
+        # gate is ours, a route needs a MAC unique id
+        outgoing_connection_target=declare_outgoing_target
+        and _mac_unique_id(entry) is not None,
     )
 
 
+if TYPE_CHECKING:
+    from aioesphomeapi.api_pb2 import SubscribeLogsResponse  # type: ignore[attr-defined]  # noqa: I001
+
+
 _LOGGER = logging.getLogger(__name__)
+
+# Max time to wait at startup for a BLE proxy to register its scanner.
+STARTUP_SCANNER_WAIT: Final = 3.0
+
+# Dashboard responses that mean the encryption-key handoff landed.
+_DASHBOARD_KEY_SYNC_OK: Final = frozenset({"stored", "updated", "unchanged"})
 
 LOG_LEVEL_TO_LOGGER = {
     LogLevel.LOG_LEVEL_NONE: logging.DEBUG,
@@ -110,11 +176,6 @@ LOGGER_TO_LOG_LEVEL = {
     logging.ERROR: LogLevel.LOG_LEVEL_ERROR,
     logging.CRITICAL: LogLevel.LOG_LEVEL_ERROR,
 }
-# 7-bit and 8-bit C1 ANSI sequences
-# https://stackoverflow.com/questions/14693701/how-can-i-remove-the-ansi-escape-sequences-from-a-string-in-python
-ANSI_ESCAPE_78BIT = re.compile(
-    rb"(?:\x1B[@-Z\\-_]|[\x80-\x9A\x9C-\x9F]|(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~])"
-)
 
 
 @callback
@@ -177,6 +238,7 @@ class ESPHomeManager:
 
     __slots__ = (
         "_cancel_subscribe_logs",
+        "_dashboard_key_sync_warned",
         "_log_level",
         "cli",
         "device_id",
@@ -212,6 +274,7 @@ class ESPHomeManager:
         self.zeroconf_instance = zeroconf_instance
         self.entry_data = entry.runtime_data
         self._cancel_subscribe_logs: CALLBACK_TYPE | None = None
+        self._dashboard_key_sync_warned = False
         self._log_level = LogLevel.LOG_LEVEL_NONE
 
     async def on_stop(self, event: Event) -> None:
@@ -274,11 +337,32 @@ class ESPHomeManager:
         elif self.entry.options.get(
             CONF_ALLOW_SERVICE_CALLS, DEFAULT_ALLOW_SERVICE_CALLS
         ):
-            hass.async_create_task(
-                hass.services.async_call(
-                    domain, service_name, service_data, blocking=True
+            call_id = service.call_id
+            if call_id and service.wants_response:
+                # Service call with response expected
+                self.entry.async_create_task(
+                    hass,
+                    self._handle_service_call_with_response(
+                        domain,
+                        service_name,
+                        service_data,
+                        call_id,
+                        service.response_template,
+                    ),
                 )
-            )
+            elif call_id:
+                # Service call without response but needs success/failure notification
+                self.entry.async_create_task(
+                    hass,
+                    self._handle_service_call_with_notification(
+                        domain, service_name, service_data, call_id
+                    ),
+                )
+            else:
+                # Fire and forget service call
+                self.entry.async_create_task(
+                    hass, hass.services.async_call(domain, service_name, service_data)
+                )
         else:
             device_info = self.entry_data.device_info
             assert device_info is not None
@@ -303,6 +387,99 @@ class ESPHomeManager:
                 service_name,
                 service_data,
             )
+
+    async def _handle_service_call_with_response(
+        self,
+        domain: str,
+        service_name: str,
+        service_data: dict,
+        call_id: int,
+        response_template: str | None = None,
+    ) -> None:
+        """Handle service call with response and send it back to ESPHome."""
+        try:
+            # Call the service with response capture enabled
+            action_response = await self.hass.services.async_call(
+                domain=domain,
+                service=service_name,
+                service_data=service_data,
+                blocking=True,
+                return_response=True,
+            )
+
+            if response_template:
+                try:
+                    # Render response template
+                    tmpl = Template(response_template, self.hass)
+                    response = tmpl.async_render(
+                        variables={"response": action_response},
+                        strict=True,
+                    )
+                    response_dict = {"response": response}
+
+                except TemplateError as ex:
+                    # pylint: disable-next=home-assistant-exception-not-translated
+                    raise HomeAssistantError(
+                        f"Error rendering response template: {ex}"
+                    ) from ex
+            else:
+                response_dict = {"response": action_response}
+
+            # JSON encode response data for ESPHome
+            response_data = json_helper.json_bytes(response_dict)
+
+        except (
+            ServiceNotFound,
+            ServiceValidationError,
+            vol.Invalid,
+            HomeAssistantError,
+        ) as ex:
+            self._send_service_call_response(
+                call_id, success=False, error_message=str(ex), response_data=b""
+            )
+
+        else:
+            # Send success response back to ESPHome
+            self._send_service_call_response(
+                call_id=call_id,
+                success=True,
+                error_message="",
+                response_data=response_data,
+            )
+
+    async def _handle_service_call_with_notification(
+        self, domain: str, service_name: str, service_data: dict, call_id: int
+    ) -> None:
+        """Handle service call that needs success/failure notification."""
+        try:
+            await self.hass.services.async_call(
+                domain, service_name, service_data, blocking=True
+            )
+        except (ServiceNotFound, ServiceValidationError, vol.Invalid) as ex:
+            self._send_service_call_response(call_id, False, str(ex), b"")
+        else:
+            self._send_service_call_response(call_id, True, "", b"")
+
+    def _send_service_call_response(
+        self,
+        call_id: int,
+        success: bool,
+        error_message: str,
+        response_data: bytes,
+    ) -> None:
+        """Send service call response back to ESPHome device."""
+        _LOGGER.debug(
+            "Service call response for call_id %s: success=%s, error=%s",
+            call_id,
+            success,
+            error_message,
+        )
+        self.cli.send_homeassistant_action_response(
+            call_id,
+            success,
+            error_message,
+            response_data,
+        )
 
     @callback
     def _send_home_assistant_state(
@@ -378,6 +555,9 @@ class ESPHomeManager:
         """Subscribe to states and list entities on successful API login."""
         try:
             await self._on_connect()
+        except InvalidAuthAPIError as err:
+            _LOGGER.warning("Authentication failed for %s: %s", self.host, err)
+            await self._start_reauth_and_disconnect()
         except APIConnectionError as err:
             _LOGGER.warning(
                 "Error getting setting up connection for %s: %s", self.host, err
@@ -387,13 +567,15 @@ class ESPHomeManager:
 
     def _async_on_log(self, msg: SubscribeLogsResponse) -> None:
         """Handle a log message from the API."""
-        log: bytes = msg.message
-        _LOGGER.log(
-            LOG_LEVEL_TO_LOGGER.get(msg.level, logging.DEBUG),
-            "%s: %s",
-            self.entry.title,
-            ANSI_ESCAPE_78BIT.sub(b"", log).decode("utf-8", "backslashreplace"),
-        )
+        for line in parse_log_message(
+            msg.message.decode("utf-8", "backslashreplace"), "", strip_ansi_escapes=True
+        ):
+            _LOGGER.log(
+                LOG_LEVEL_TO_LOGGER.get(msg.level, logging.DEBUG),
+                "%s: %s",
+                self.entry.title,
+                line,
+            )
 
     @callback
     def _async_get_equivalent_log_level(self) -> LogLevel:
@@ -413,6 +595,36 @@ class ESPHomeManager:
             self._async_on_log, self._log_level
         )
 
+    @callback
+    def _async_register_outgoing_target(self, reconnect_logic: ReconnectLogic) -> None:
+        """Register this entry's MAC with the shared dial-in listener.
+
+        Runs once at setup; a dynamically provisioned key takes effect on
+        the reload that follows it: the device drops the keyless session
+        and the reauth flow reloads the entry with the stored key.
+        """
+        entry = self.entry
+        # Read the flag off the client so the route matches the hello; the
+        # flag implies a MAC unique id, which is the routing key
+        if (
+            not self.cli.outgoing_connection_target
+            or (mac := _mac_unique_id(entry)) is None
+        ):
+            _LOGGER.debug("%s: Not routing dial-ins; not a target", entry.title)
+            return
+        try:
+            unregister = async_register_outgoing_target(self.hass, mac, reconnect_logic)
+        except Exception:
+            # Dial-in is an optional extra; it must not fail the entry
+            _LOGGER.exception("%s: Could not set up dial-in routing", entry.title)
+            return
+        if unregister is None:
+            # Shutting down; the device is on its own until the next reload
+            _LOGGER.debug("%s: Dial-in routing not started", entry.title)
+            return
+        # async_on_unload also runs when setup fails or is cancelled
+        entry.async_on_unload(unregister)
+
     async def _on_connect(self) -> None:
         """Subscribe to states and list entities on successful API login."""
         entry = self.entry
@@ -426,14 +638,7 @@ class ESPHomeManager:
         unique_id_is_mac_address = unique_id and ":" in unique_id
         if entry.options.get(CONF_SUBSCRIBE_LOGS):
             self._async_subscribe_logs(self._async_get_equivalent_log_level())
-        results = await asyncio.gather(
-            create_eager_task(cli.device_info()),
-            create_eager_task(cli.list_entities_services()),
-        )
-
-        device_info: EsphomeDeviceInfo = results[0]
-        entity_infos_services: tuple[list[EntityInfo], list[UserService]] = results[1]
-        entity_infos, services = entity_infos_services
+        device_info, entity_infos, services = await cli.device_info_and_list_entities()
 
         device_mac = format_mac(device_info.mac_address)
         mac_address_matches = unique_id == device_mac
@@ -516,7 +721,9 @@ class ESPHomeManager:
 
         api_version = cli.api_version
         assert api_version is not None, "API version must be set"
-        entry_data.async_on_connect(device_info, api_version)
+        entry_data.async_on_connect(hass, device_info, api_version)
+
+        await self._handle_dynamic_encryption_key(device_info)
 
         if device_info.name:
             reconnect_logic.name = device_info.name
@@ -530,6 +737,11 @@ class ESPHomeManager:
                 device_info.name,
                 device_mac,
             )
+        # Build device_id_to_name mapping for efficient lookup
+        entry_data.device_id_to_name = {
+            sub_device.device_id: sub_device.name or device_info.name
+            for sub_device in device_info.devices
+        }
         self.device_id = _async_setup_device_registry(hass, entry, entry_data)
 
         entry_data.async_update_device_state()
@@ -541,13 +753,15 @@ class ESPHomeManager:
         if device_info.bluetooth_proxy_feature_flags_compat(api_version):
             entry_data.disconnect_callbacks.add(
                 async_connect_scanner(
-                    hass, entry_data, cli, device_info, self.device_id
+                    hass, self.entry, entry_data, cli, device_info, self.device_id
                 )
             )
         else:
             bluetooth.async_remove_scanner(
                 hass, device_info.bluetooth_mac_address or device_info.mac_address
             )
+
+        entry_data.first_connect_done.set()
 
         if device_info.voice_assistant_feature_flags_compat(api_version) and (
             Platform.ASSIST_SATELLITE not in entry_data.loaded_platforms
@@ -558,16 +772,40 @@ class ESPHomeManager:
             )
             entry_data.loaded_platforms.add(Platform.ASSIST_SATELLITE)
 
-        cli.subscribe_states(entry_data.async_update_state)
-        cli.subscribe_service_calls(self.async_on_service_call)
-        cli.subscribe_home_assistant_states(
-            self.async_on_state_subscription,
-            self.async_on_state_request,
+        if device_info.zwave_proxy_feature_flags:
+            entry_data.disconnect_callbacks.add(
+                cli.subscribe_zwave_proxy_request(self._async_zwave_proxy_request)
+            )
+
+        cli.subscribe_home_assistant_states_and_services(
+            on_state=entry_data.async_update_state,
+            on_service_call=self.async_on_service_call,
+            on_state_sub=self.async_on_state_subscription,
+            on_state_request=self.async_on_state_request,
         )
 
         entry_data.async_save_to_store()
         _async_check_firmware_version(hass, device_info, api_version)
         _async_check_using_api_password(hass, device_info, bool(self.password))
+
+    def _async_zwave_proxy_request(self, request: ZWaveProxyRequest) -> None:
+        """Handle a request to create a zwave_js config flow."""
+        if request.type != ZWaveProxyRequestType.HOME_ID_CHANGE:
+            return
+        # ESPHome will send a home id change on every connection
+        # if the Z-Wave controller is connected to the ESPHome device
+        # so we know for sure that the Z-Wave controller is connected
+        # when we get the message. This makes it safe to start
+        # the zwave_js config flow automatically even if the zwave_home_id
+        # is 0 (not yet provisioned) as we know for sure the controller
+        # is connected to the ESPHome device and do not have to guess
+        # if it's a broken connection or Z-Wave controller or a not
+        # yet provisioned controller.
+        zwave_home_id: int = UNPACK_UINT32_BE(request.data[0:4])[0]
+        assert self.entry_data.device_info is not None
+        self.entry_data.async_create_zwave_js_flow(
+            self.hass, self.entry_data.device_info, zwave_home_id
+        )
 
     async def on_disconnect(self, expected_disconnect: bool) -> None:
         """Run disconnect callbacks on API disconnect."""
@@ -582,14 +820,7 @@ class ESPHomeManager:
             expected_disconnect,
         )
         entry_data.async_on_disconnect()
-        entry_data.expected_disconnect = expected_disconnect
-        # Mark state as stale so that we will always dispatch
-        # the next state update of that type when the device reconnects
-        entry_data.stale_state = {
-            (type(entity_state), key)
-            for state_dict in entry_data.state.values()
-            for key, entity_state in state_dict.items()
-        }
+        entry_data.async_record_disconnect(expected_disconnect)
         if not hass.is_stopping:
             # Avoid marking every esphome entity as unavailable on shutdown
             # since it generates a lot of state changed events and database
@@ -616,6 +847,7 @@ class ESPHomeManager:
             ),
         ):
             return
+
         if isinstance(err, InvalidEncryptionKeyAPIError):
             if (
                 (received_name := err.received_name)
@@ -644,7 +876,253 @@ class ESPHomeManager:
                     if self.reconnect_logic:
                         await self.reconnect_logic.stop()
                     return
+        await self._start_reauth_and_disconnect()
+
+    async def _start_reauth_and_disconnect(self) -> None:
+        """Start reauth flow and stop reconnection attempts."""
         self.entry.async_start_reauth(self.hass)
+        await self.cli.disconnect()
+        if self.reconnect_logic:
+            await self.reconnect_logic.stop()
+
+    async def _async_provision_key_over_noise(self, new_key: bytes) -> bool:
+        """Send the encryption key over a short lived zero PSK Noise connection.
+
+        The well known all zeros PSK still runs a fresh ephemeral X25519
+        exchange, so the key cannot be read by a passive listener on the
+        network. This protects against sniffing only; it does not
+        authenticate either side against an active man in the middle.
+
+        Returns True if the device accepted the key. On failure the caller
+        simply returns; provisioning runs again on the next connect cycle.
+        """
+        unique_id = self.entry.unique_id
+        cli = async_create_api_client(
+            self.hass,
+            self.entry,
+            self.zeroconf_instance,
+            noise_psk=ZERO_NOISE_PSK,
+        )
+        device_name = self.entry.data.get(CONF_DEVICE_NAME, self.host)
+        try:
+            await cli.connect()
+            if await cli.noise_encryption_set_key(new_key):
+                return True
+            _LOGGER.error(
+                "Device %s (%s) rejected the encryption key",
+                device_name,
+                unique_id,
+            )
+        except InvalidEncryptionKeyAPIError:
+            _LOGGER.error(
+                "Device %s (%s) rejected the zero PSK handshake; it appears "
+                "to already have an encryption key set",
+                device_name,
+                unique_id,
+            )
+        except APIConnectionError as ex:
+            # Whatever went wrong, we never downgrade to a plaintext push;
+            # provisioning simply runs again on the next connect cycle
+            _LOGGER.error(
+                "Error provisioning encryption key for device %s (%s): %s",
+                device_name,
+                unique_id,
+                ex,
+            )
+        finally:
+            await cli.disconnect(force=True)
+        return False
+
+    @callback
+    def _async_schedule_dashboard_key_sync(
+        self, device_info: EsphomeDeviceInfo, key: str
+    ) -> None:
+        """Schedule the best-effort dashboard key sync off the connect path."""
+        self.entry.async_create_background_task(
+            self.hass,
+            self._async_sync_encryption_key_to_dashboard(device_info, key),
+            "esphome-sync-encryption-key",
+        )
+
+    async def _async_sync_encryption_key_to_dashboard(
+        self, device_info: EsphomeDeviceInfo, key: str
+    ) -> None:
+        """Best effort: tell the ESPHome dashboard about the provisioned key.
+
+        Without this the dashboard has no way to know the key HA set on
+        the device, so adopting the device generates a competing key and
+        the next flash locks HA out. Never fails the connect flow: a
+        dashboard without the endpoint (404/405) logs at debug, any
+        other failure warns once per manager.
+        """
+        if (dashboard := async_get_dashboard(self.hass)) is None:
+            return
+        try:
+            result = await dashboard.api.post_encryption_key(
+                device_info.name, key, mac=self.entry.unique_id
+            )
+        except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError) as err:
+            if isinstance(err, aiohttp.ClientResponseError) and err.status in (
+                404,
+                405,
+            ):
+                # Endpoint absent — an old dashboard, not a failed store.
+                _LOGGER.debug(
+                    "The ESPHome dashboard does not support the encryption key "
+                    "handoff for %s: %s",
+                    device_info.name,
+                    err,
+                )
+            else:
+                self._async_warn_dashboard_key_sync_failed(device_info, err)
+            return
+        result_value = result.get("result") if isinstance(result, dict) else None
+        reason = result.get("reason") if isinstance(result, dict) else None
+        if isinstance(result_value, str) and result_value in _DASHBOARD_KEY_SYNC_OK:
+            if reason:
+                # Partial success: a duplicate-name sibling refused the
+                # key and flashing it can still lock HA out.
+                self._async_warn_dashboard_key_sync_failed(device_info, reason)
+                return
+            _LOGGER.debug(
+                "Synced encryption key for %s to the ESPHome dashboard: %s",
+                device_info.name,
+                result,
+            )
+            return
+        self._async_warn_dashboard_key_sync_failed(
+            device_info, reason or f"unexpected response {result}"
+        )
+
+    @callback
+    def _async_warn_dashboard_key_sync_failed(
+        self, device_info: EsphomeDeviceInfo, cause: Exception | str
+    ) -> None:
+        """Warn once that the dashboard did not store the key."""
+        if self._dashboard_key_sync_warned:
+            return
+        self._dashboard_key_sync_warned = True
+        _LOGGER.warning(
+            "The ESPHome dashboard could not store the encryption key for "
+            "%s (%s), so installing that configuration may use a different "
+            "key and lock Home Assistant out: %s",
+            device_info.name,
+            self.entry.unique_id,
+            cause,
+        )
+
+    async def _handle_dynamic_encryption_key(
+        self, device_info: EsphomeDeviceInfo
+    ) -> None:
+        """Handle dynamic encryption keys.
+
+        If a device reports it supports encryption, but we connected without a key,
+        we need to generate and store one.
+        """
+        noise_psk: str | None = self.entry.data.get(CONF_NOISE_PSK)
+        if noise_psk:
+            # We're already connected with this key, so it's proven valid;
+            # re-offer it so a dashboard that missed the original handoff
+            # (added later, upgraded, or temporarily unreachable) catches
+            # up. Deliberately re-offered on every connect (no success
+            # latch): the dashboard no-ops on an identical key, and a
+            # dashboard whose copy was deleted out from under it gets it
+            # back on the next connect.
+            # Only keys in our storage are ours to push — a user-authored
+            # YAML key is not (mirrors _async_clear_dynamic_encryption_key).
+            # Background task: this runs on every connect and must not
+            # delay entity setup.
+            storage = await async_get_encryption_key_storage(self.hass)
+            if self.entry.unique_id and (
+                await storage.async_get_key(self.entry.unique_id) == noise_psk
+            ):
+                self._async_schedule_dashboard_key_sync(device_info, noise_psk)
+            return
+
+        if not device_info.api_encryption_supported:
+            # device does not support encryption - nothing to do
+            return
+
+        # Connected to device without key and the device supports encryption
+        storage = await async_get_encryption_key_storage(self.hass)
+
+        # First check if we have a key in storage for this device
+        from_storage: bool = False
+        if self.entry.unique_id and (
+            stored_key := await storage.async_get_key(self.entry.unique_id)
+        ):
+            _LOGGER.debug(
+                "Retrieved encryption key from storage for device %s",
+                self.entry.unique_id,
+            )
+            # Use the stored key
+            new_key = stored_key.encode()
+            new_key_str = stored_key
+            from_storage = True
+        else:
+            # No stored key found, generate a new one
+            _LOGGER.debug(
+                "Generating new encryption key for device %s", self.entry.unique_id
+            )
+            new_key = base64.b64encode(secrets.token_bytes(32))
+            new_key_str = new_key.decode()
+
+        if device_info.api_encryption_provisionable:
+            # New firmware: send the key over an encrypted zero PSK Noise
+            # connection so it cannot be sniffed off the network
+            if not await self._async_provision_key_over_noise(new_key):
+                return
+        else:
+            # Old firmware only accepts the key over the existing plaintext
+            # connection. Deprecated; will be removed after the usual window.
+            try:
+                result = await self.cli.noise_encryption_set_key(new_key)
+            except APIConnectionError as ex:
+                _LOGGER.error(
+                    "Connection error while storing encryption key for device %s (%s): %s",
+                    self.entry.data.get(CONF_DEVICE_NAME, self.host),
+                    self.entry.unique_id,
+                    ex,
+                )
+                return
+            if not result:
+                _LOGGER.error(
+                    "Failed to set dynamic encryption key on device %s (%s)",
+                    self.entry.data.get(CONF_DEVICE_NAME, self.host),
+                    self.entry.unique_id,
+                )
+                return
+
+        # Key stored successfully on device
+        assert self.entry.unique_id is not None
+
+        # Only store in storage if it was newly generated
+        if not from_storage:
+            await storage.async_store_key(self.entry.unique_id, new_key_str)
+
+        # Always update config entry
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            data={**self.entry.data, CONF_NOISE_PSK: new_key_str},
+        )
+
+        # The dashboard must learn the key or its next adoption/flash of
+        # this device bakes in a competing key and locks HA out. Background
+        # task: an unreachable dashboard must not stall entity setup.
+        self._async_schedule_dashboard_key_sync(device_info, new_key_str)
+
+        if from_storage:
+            _LOGGER.info(
+                "Set encryption key from storage on device %s (%s)",
+                self.entry.data.get(CONF_DEVICE_NAME, self.host),
+                self.entry.unique_id,
+            )
+        else:
+            _LOGGER.info(
+                "Generated and stored encryption key for device %s (%s)",
+                self.entry.data.get(CONF_DEVICE_NAME, self.host),
+                self.entry.unique_id,
+            )
 
     @callback
     def _async_handle_logging_changed(self, _event: Event) -> None:
@@ -664,8 +1142,8 @@ class ESPHomeManager:
         # Remove this after 2026.4
         if not (
             stale_entry_entity_id := ent_reg.async_get_entity_id(
-                DOMAIN,
                 Platform.BINARY_SENSOR,
+                DOMAIN,
                 f"{self.entry_data.device_info.mac_address}-assist_in_progress",
             )
         ):
@@ -713,7 +1191,9 @@ class ESPHomeManager:
         )
         entry_data.cleanup_callbacks.extend(cleanups)
 
-        infos, services = await entry_data.async_load_from_store()
+        infos, services = await entry_data.async_load_from_store(
+            restore_states=bool(entry.unique_id)
+        )
         if entry.unique_id:
             await entry_data.async_update_static_infos(
                 hass, entry, infos, entry.unique_id.upper()
@@ -724,6 +1204,10 @@ class ESPHomeManager:
             self._async_cleanup()
             if device_info.name:
                 reconnect_logic.name = device_info.name
+            # Seed the backoff cap from the restored device_info so the first
+            # reconnect after a restart already caps for a deep-sleep device,
+            # before the first live connect refreshes it.
+            reconnect_logic.deep_sleep = device_info.has_deep_sleep
             if (
                 bluetooth_mac_address := device_info.bluetooth_mac_address
             ) and entry.data.get(CONF_BLUETOOTH_MAC_ADDRESS) != bluetooth_mac_address:
@@ -741,9 +1225,34 @@ class ESPHomeManager:
 
         await reconnect_logic.start()
 
-        entry.async_on_unload(
-            entry.add_update_listener(entry_data.async_update_listener)
-        )
+        # After start(), the last call that can raise, so a failed setup
+        # cannot leak the route; before the BLE wait below so a dial-in can
+        # satisfy the first connect during a short wake window
+        self._async_register_outgoing_target(reconnect_logic)
+
+        # Wait for a cached BLE proxy to register its scanner before finishing setup.
+        if (
+            device_info := entry_data.device_info
+        ) is not None and device_info.bluetooth_proxy_feature_flags_compat(
+            entry_data.api_version
+        ):
+            try:
+                async with asyncio.timeout(STARTUP_SCANNER_WAIT):
+                    await entry_data.first_connect_done.wait()
+            except TimeoutError:
+                _LOGGER.debug(
+                    "%s: Timed out waiting for Bluetooth scanner to register",
+                    self.host,
+                )
+
+
+@callback
+def async_get_manufacturer_model(device_info: EsphomeDeviceInfo) -> tuple[str, str]:
+    """Return the manufacturer and model to use for a device."""
+    if device_info.project_name:
+        project_name = device_info.project_name.split(".")
+        return project_name[0], project_name[1]
+    return device_info.manufacturer or "espressif", device_info.model
 
 
 @callback
@@ -754,6 +1263,28 @@ def _async_setup_device_registry(
     device_info = entry_data.device_info
     if TYPE_CHECKING:
         assert device_info is not None
+
+    device_registry = dr.async_get(hass)
+    # Build sets of valid device identifiers and connections
+    valid_connections = {
+        (dr.CONNECTION_NETWORK_MAC, format_mac(device_info.mac_address))
+    }
+    valid_identifiers = {
+        (DOMAIN, f"{device_info.mac_address}_{sub_device.device_id}")
+        for sub_device in device_info.devices
+    }
+
+    # Remove devices that no longer exist
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        # Skip devices we want to keep
+        if (
+            device.connections & valid_connections
+            or device.identifiers & valid_identifiers
+        ):
+            continue
+        # Remove everything else
+        device_registry.async_remove_device(device.id)
+
     sw_version = device_info.esphome_version
     if device_info.compilation_time:
         sw_version += f" ({device_info.compilation_time})"
@@ -768,25 +1299,22 @@ def _async_setup_device_registry(
         and dashboard.data
         and dashboard.data.get(device_info.name)
     ):
-        configuration_url = f"homeassistant://hassio/ingress/{dashboard.addon_slug}"
+        configuration_url = f"homeassistant://app/{dashboard.addon_slug}"
 
-    manufacturer = "espressif"
-    if device_info.manufacturer:
-        manufacturer = device_info.manufacturer
-    model = device_info.model
+    manufacturer, model = async_get_manufacturer_model(device_info)
     if device_info.project_name:
-        project_name = device_info.project_name.split(".")
-        manufacturer = project_name[0]
-        model = project_name[1]
         sw_version = (
             f"{device_info.project_version} (ESPHome {device_info.esphome_version})"
         )
 
-    suggested_area = None
-    if device_info.suggested_area:
+    suggested_area: str | None = None
+    if device_info.area and device_info.area.name:
+        # Prefer device_info.area over suggested_area when area name is not empty
+        suggested_area = device_info.area.name
+    elif device_info.suggested_area:
         suggested_area = device_info.suggested_area
 
-    device_registry = dr.async_get(hass)
+    # Create/update main device
     device_entry = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         configuration_url=configuration_url,
@@ -797,6 +1325,36 @@ def _async_setup_device_registry(
         sw_version=sw_version,
         suggested_area=suggested_area,
     )
+
+    # Handle sub devices
+    # Find available areas from device_info
+    areas_by_id = {area.area_id: area for area in device_info.areas}
+    # Add the main device's area if it exists
+    if device_info.area:
+        areas_by_id[device_info.area.area_id] = device_info.area
+    # Create/update sub devices that should exist
+    for sub_device in device_info.devices:
+        # Determine the area for this sub device
+        sub_device_suggested_area: str | None = None
+        if sub_device.area_id is not None and sub_device.area_id in areas_by_id:
+            sub_device_suggested_area = areas_by_id[sub_device.area_id].name
+
+        sub_device_entry = device_registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, f"{device_info.mac_address}_{sub_device.device_id}")},
+            name=sub_device.name or device_entry.name,
+            manufacturer=manufacturer,
+            model=model,
+            sw_version=sw_version,
+            suggested_area=sub_device_suggested_area,
+        )
+
+        # Update the sub device to set via_device_id
+        device_registry.async_update_device(
+            sub_device_entry.id,
+            via_device_id=device_entry.id,
+        )
+
     return device_entry.id
 
 
@@ -857,13 +1415,52 @@ ARG_TYPE_METADATA = {
 }
 
 
-@callback
-def execute_service(
-    entry_data: RuntimeEntryData, service: UserService, call: ServiceCall
-) -> None:
-    """Execute a service on a node."""
+async def execute_service(
+    entry_data: RuntimeEntryData,
+    service: UserService,
+    call: ServiceCall,
+    *,
+    supports_response: SupportsResponseType,
+) -> ServiceResponse:
+    """Execute a service on a node and optionally wait for response."""
+    # Determine if we should wait for a response
+    # NONE: fire and forget
+    # OPTIONAL/ONLY/STATUS: always wait for success/error confirmation
+    wait_for_response = supports_response != SupportsResponseType.NONE
+
+    if not wait_for_response:
+        # Fire and forget - no response expected
+        try:
+            await entry_data.client.execute_service(service, call.data)
+        except APIConnectionError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="action_call_failed",
+                translation_placeholders={
+                    "call_name": service.name,
+                    "device_name": entry_data.name,
+                    "error": str(err),
+                },
+            ) from err
+        else:
+            return None
+
+    # Determine if we need response_data from ESPHome
+    # ONLY: always need response_data
+    # OPTIONAL: only if caller requested it
+    # STATUS: never need response_data (just success/error)
+    need_response_data = supports_response == SupportsResponseType.ONLY or (
+        supports_response == SupportsResponseType.OPTIONAL and call.return_response
+    )
+
     try:
-        entry_data.client.execute_service(service, call.data)
+        response: (
+            ExecuteServiceResponse | None
+        ) = await entry_data.client.execute_service(
+            service,
+            call.data,
+            return_response=need_response_data,
+        )
     except APIConnectionError as err:
         raise HomeAssistantError(
             translation_domain=DOMAIN,
@@ -874,11 +1471,62 @@ def execute_service(
                 "error": str(err),
             },
         ) from err
+    except TimeoutError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="action_call_timeout",
+            translation_placeholders={
+                "call_name": service.name,
+                "device_name": entry_data.name,
+            },
+        ) from err
+
+    assert response is not None
+
+    if not response.success:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="action_call_failed",
+            translation_placeholders={
+                "call_name": service.name,
+                "device_name": entry_data.name,
+                "error": response.error_message,
+            },
+        )
+
+    # Parse and return response data as JSON if we requested it
+    if need_response_data and response.response_data:
+        try:
+            return json_loads_object(response.response_data)
+        except ValueError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="action_call_failed",
+                translation_placeholders={
+                    "call_name": service.name,
+                    "device_name": entry_data.name,
+                    "error": f"Invalid JSON response: {err}",
+                },
+            ) from err
+    return None
 
 
 def build_service_name(device_info: EsphomeDeviceInfo, service: UserService) -> str:
     """Build a service name for a node."""
     return f"{device_info.name.replace('-', '_')}_{service.name}"
+
+
+# Map ESPHome SupportsResponseType to Home Assistant SupportsResponse
+# STATUS (100) is ESPHome-specific: waits for success/error internally but
+# doesn't return data to HA, so it maps to NONE from HA's perspective
+_RESPONSE_TYPE_MAPPER = EsphomeEnumMapper[SupportsResponseType, SupportsResponse](
+    {
+        SupportsResponseType.NONE: SupportsResponse.NONE,
+        SupportsResponseType.OPTIONAL: SupportsResponse.OPTIONAL,
+        SupportsResponseType.ONLY: SupportsResponse.ONLY,
+        SupportsResponseType.STATUS: SupportsResponse.NONE,
+    }
+)
 
 
 @callback
@@ -912,11 +1560,21 @@ def _async_register_service(
             "selector": metadata.selector,
         }
 
+    # Get the supports_response from the service, defaulting to NONE
+    esphome_supports_response = service.supports_response or SupportsResponseType.NONE
+    ha_supports_response = _RESPONSE_TYPE_MAPPER.from_esphome(esphome_supports_response)
+
     hass.services.async_register(
         DOMAIN,
         service_name,
-        partial(execute_service, entry_data, service),
+        partial(
+            execute_service,
+            entry_data,
+            service,
+            supports_response=esphome_supports_response,
+        ),
         vol.Schema(schema),
+        supports_response=ha_supports_response,
     )
     async_set_service_schema(
         hass,
@@ -924,7 +1582,7 @@ def _async_register_service(
         service_name,
         {
             "description": (
-                f"Calls the service {service.name} of the node {device_info.name}"
+                f"Performs the action {service.name} of the node {device_info.name}"
             ),
             "fields": fields,
         },
@@ -968,11 +1626,18 @@ def _setup_services(
 async def cleanup_instance(entry: ESPHomeConfigEntry) -> RuntimeEntryData:
     """Cleanup the esphome client if it exists."""
     data = entry.runtime_data
+    was_connected = data.available
     data.async_on_disconnect()
     for cleanup_callback in data.cleanup_callbacks:
         cleanup_callback()
-    await data.async_cleanup()
-    await data.client.disconnect()
+    try:
+        await data.client.disconnect()
+    finally:
+        if was_connected:
+            # on_disconnect runs in a background task that may not have
+            # persisted yet; the connection was closed by us, so it is expected
+            data.async_record_disconnect(expected_disconnect=True)
+        await data.async_cleanup()
     return data
 
 
@@ -998,13 +1663,14 @@ async def async_replace_device(
     upper_mac = new_mac.upper()
     old_upper_mac = old_mac.upper()
     for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-        # <upper_mac>-<entity type>-<object_id>
-        old_unique_id = entity.unique_id.split("-")
-        new_unique_id = "-".join([upper_mac, *old_unique_id[1:]])
-        if entity.unique_id != new_unique_id and entity.unique_id.startswith(
-            old_upper_mac
-        ):
-            ent_reg.async_update_entity(entity.entity_id, new_unique_id=new_unique_id)
+        # The mac is the leading segment of the unique id in every format,
+        # so swap the prefix without parsing the rest.
+        if entity.unique_id.startswith(old_upper_mac):
+            new_unique_id = upper_mac + entity.unique_id[len(old_upper_mac) :]
+            if new_unique_id != entity.unique_id:
+                ent_reg.async_update_entity(
+                    entity.entity_id, new_unique_id=new_unique_id
+                )
 
     domain_data = DomainData.get(hass)
     store = domain_data.get_or_create_store(hass, entry)

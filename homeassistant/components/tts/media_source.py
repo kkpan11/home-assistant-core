@@ -1,9 +1,7 @@
 """Text-to-speech media source."""
 
-from __future__ import annotations
-
 import json
-from typing import TypedDict
+from typing import TypedDict, override
 
 from yarl import URL
 
@@ -19,7 +17,7 @@ from homeassistant.components.media_source import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DATA_COMPONENT, DATA_TTS_MANAGER, DOMAIN
+from .const import DATA_COMPONENT, DATA_TTS_MANAGER, DOMAIN, MEDIA_SOURCE_STREAM_PATH
 from .helper import get_engine_instance
 
 URL_QUERY_TTS_OPTIONS = "tts_options"
@@ -40,7 +38,7 @@ def generate_media_source_id(
     cache: bool | None = None,
 ) -> str:
     """Generate a media source ID for text-to-speech."""
-    from . import async_resolve_engine  # pylint: disable=import-outside-toplevel
+    from . import async_resolve_engine  # noqa: PLC0415
 
     if (engine := async_resolve_engine(hass, engine)) is None:
         raise HomeAssistantError("Invalid TTS provider selected")
@@ -81,10 +79,22 @@ class ParsedMediaSourceId(TypedDict):
     message: str
 
 
+class ParsedMediaSourceStreamId(TypedDict):
+    """Parsed media source ID for a stream."""
+
+    stream: str
+
+
 @callback
-def parse_media_source_id(media_source_id: str) -> ParsedMediaSourceId:
+def parse_media_source_id(
+    media_source_id: str,
+) -> ParsedMediaSourceId | ParsedMediaSourceStreamId:
     """Turn a media source ID into options."""
     parsed = URL(media_source_id)
+
+    if parsed.path.startswith(f"{MEDIA_SOURCE_STREAM_PATH}/"):
+        return {"stream": parsed.path[len(MEDIA_SOURCE_STREAM_PATH) + 1 :]}
+
     if URL_QUERY_TTS_OPTIONS in parsed.query:
         try:
             options = json.loads(parsed.query[URL_QUERY_TTS_OPTIONS])
@@ -120,21 +130,32 @@ class TTSMediaSource(MediaSource):
         super().__init__(DOMAIN)
         self.hass = hass
 
+    @override
     async def async_resolve_media(self, item: MediaSourceItem) -> PlayMedia:
         """Resolve media to a url."""
+        manager = self.hass.data[DATA_TTS_MANAGER]
         try:
             parsed = parse_media_source_id(item.identifier)
-            stream = self.hass.data[DATA_TTS_MANAGER].async_create_result_stream(
-                **parsed["options"]
-            )
-            stream.async_set_message(parsed["message"])
+            if "stream" in parsed:
+                stream = manager.async_get_result_stream(
+                    parsed["stream"],  # type: ignore[typeddict-item]
+                )
+            else:
+                stream = manager.async_create_result_stream(**parsed["options"])
+                stream.async_set_message(parsed["message"])
         except Unresolvable:
             raise
         except HomeAssistantError as err:
             raise Unresolvable(str(err)) from err
 
-        return PlayMedia(stream.url, stream.content_type)
+        if stream is None:
+            raise Unresolvable("Stream not found")
 
+        return PlayMedia(
+            stream.url, stream.content_type, path=stream.async_get_media_path()
+        )
+
+    @override
     async def async_browse_media(
         self,
         item: MediaSourceItem,
@@ -174,7 +195,7 @@ class TTSMediaSource(MediaSource):
     @callback
     def _engine_item(self, engine: str, params: str | None = None) -> BrowseMediaSource:
         """Return provider item."""
-        from . import TextToSpeechEntity  # pylint: disable=import-outside-toplevel
+        from . import TextToSpeechEntity  # noqa: PLC0415
 
         if (engine_instance := get_engine_instance(self.hass, engine)) is None:
             raise BrowseError("Unknown provider")
@@ -195,7 +216,7 @@ class TTSMediaSource(MediaSource):
             media_class=MediaClass.APP,
             media_content_type="provider",
             title=engine_instance.name,
-            thumbnail=f"https://brands.home-assistant.io/_/{engine_domain}/logo.png",
+            thumbnail=f"/api/brands/integration/{engine_domain}/logo.png",
             can_play=False,
             can_expand=True,
         )

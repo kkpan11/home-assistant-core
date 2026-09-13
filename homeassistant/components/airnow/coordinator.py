@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 import logging
-from typing import Any
+from typing import Any, override
 
 from aiohttp import ClientSession
 from aiohttp.client_exceptions import ClientConnectorError
@@ -51,13 +51,11 @@ class AirNowDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         api_key: str,
         latitude: float,
         longitude: float,
-        distance: int,
         update_interval: timedelta,
     ) -> None:
         """Initialize."""
         self.latitude = latitude
         self.longitude = longitude
-        self.distance = distance
 
         self.airnow = WebServiceAPI(api_key, session=session)
 
@@ -69,14 +67,14 @@ class AirNowDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=update_interval,
         )
 
+    @override
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via library."""
-        data = {}
+        data: dict[str, Any] = {}
         try:
             obs = await self.airnow.observations.latLong(
                 self.latitude,
                 self.longitude,
-                distance=self.distance,
             )
 
         except (AirNowError, ClientConnectorError, InvalidJsonError) as error:

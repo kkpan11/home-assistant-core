@@ -19,6 +19,7 @@ from . import (
     SATELLITE_INFO,
     STT_INFO,
     TTS_INFO,
+    TTS_STREAMING_INFO,
     WAKE_WORD_INFO,
 )
 
@@ -49,7 +50,7 @@ def mock_setup_entry() -> Generator[AsyncMock]:
 def stt_config_entry(hass: HomeAssistant) -> ConfigEntry:
     """Create a config entry."""
     entry = MockConfigEntry(
-        domain="wyoming",
+        domain=DOMAIN,
         data={
             "host": "1.2.3.4",
             "port": 1234,
@@ -64,7 +65,7 @@ def stt_config_entry(hass: HomeAssistant) -> ConfigEntry:
 def tts_config_entry(hass: HomeAssistant) -> ConfigEntry:
     """Create a config entry."""
     entry = MockConfigEntry(
-        domain="wyoming",
+        domain=DOMAIN,
         data={
             "host": "1.2.3.4",
             "port": 1234,
@@ -79,7 +80,7 @@ def tts_config_entry(hass: HomeAssistant) -> ConfigEntry:
 def wake_word_config_entry(hass: HomeAssistant) -> ConfigEntry:
     """Create a config entry."""
     entry = MockConfigEntry(
-        domain="wyoming",
+        domain=DOMAIN,
         data={
             "host": "1.2.3.4",
             "port": 1234,
@@ -94,7 +95,7 @@ def wake_word_config_entry(hass: HomeAssistant) -> ConfigEntry:
 def intent_config_entry(hass: HomeAssistant) -> ConfigEntry:
     """Create a config entry."""
     entry = MockConfigEntry(
-        domain="wyoming",
+        domain=DOMAIN,
         data={
             "host": "1.2.3.4",
             "port": 1234,
@@ -109,7 +110,7 @@ def intent_config_entry(hass: HomeAssistant) -> ConfigEntry:
 def handle_config_entry(hass: HomeAssistant) -> ConfigEntry:
     """Create a config entry."""
     entry = MockConfigEntry(
-        domain="wyoming",
+        domain=DOMAIN,
         data={
             "host": "1.2.3.4",
             "port": 1234,
@@ -142,6 +143,20 @@ async def init_wyoming_tts(
     with patch(
         "homeassistant.components.wyoming.data.load_wyoming_info",
         return_value=TTS_INFO,
+    ):
+        await hass.config_entries.async_setup(tts_config_entry.entry_id)
+
+    return tts_config_entry
+
+
+@pytest.fixture
+async def init_wyoming_streaming_tts(
+    hass: HomeAssistant, tts_config_entry: ConfigEntry
+) -> ConfigEntry:
+    """Initialize Wyoming streaming TTS."""
+    with patch(
+        "homeassistant.components.wyoming.data.load_wyoming_info",
+        return_value=TTS_STREAMING_INFO,
     ):
         await hass.config_entries.async_setup(tts_config_entry.entry_id)
 
@@ -207,7 +222,7 @@ def metadata(hass: HomeAssistant) -> stt.SpeechMetadata:
 def satellite_config_entry(hass: HomeAssistant) -> ConfigEntry:
     """Create a config entry."""
     entry = MockConfigEntry(
-        domain="wyoming",
+        domain=DOMAIN,
         data={
             "host": "1.2.3.4",
             "port": 1234,
@@ -239,4 +254,4 @@ async def satellite_device(
     hass: HomeAssistant, init_satellite, satellite_config_entry: ConfigEntry
 ) -> SatelliteDevice:
     """Get a satellite device fixture."""
-    return hass.data[DOMAIN][satellite_config_entry.entry_id].device
+    return satellite_config_entry.runtime_data.device

@@ -7,7 +7,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
-from syrupy import SnapshotAssertion
+from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.components.backup import (
     AddonInfo,
@@ -30,8 +30,6 @@ from homeassistant.components.backup.manager import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.backup import async_initialize_backup
-from homeassistant.setup import async_setup_component
 
 from .common import (
     LOCAL_AGENT_ID,
@@ -78,7 +76,7 @@ DEFAULT_STORAGE_DATA: dict[str, Any] = {
             "copies": None,
             "days": None,
         },
-        "schedule": {"days": [], "recurrence": "never", "state": "never", "time": None},
+        "schedule": {"days": [], "recurrence": "never", "time": None},
     },
 }
 DAILY = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -87,14 +85,16 @@ TEST_MANAGER_BACKUP = ManagerBackup(
     addons=[AddonInfo(name="Test", slug="test", version="1.0.0")],
     agents={"test.test-agent": AgentBackupStatus(protected=True, size=0)},
     backup_id="backup-1",
-    date="1970-01-01T00:00:00.000Z",
     database_included=True,
+    date="1970-01-01T00:00:00.000Z",
     extra_metadata={"instance_id": "abc123", "with_automatic_settings": True},
+    failed_addons=[],
+    failed_agent_ids=[],
+    failed_folders=[],
     folders=[Folder.MEDIA, Folder.SHARE],
     homeassistant_included=True,
     homeassistant_version="2024.12.0",
     name="Test",
-    failed_agent_ids=[],
     with_automatic_settings=True,
 )
 
@@ -271,8 +271,8 @@ async def test_details_get_backup_returns_none(
         )
         assert await client.receive_json() == snapshot
     assert (
-        "Detected that integration 'test' returns None from BackupAgent.async_get_backup."
-        in caplog.text
+        "Detected that integration 'test' returns None from"
+        " BackupAgent.async_get_backup." in caplog.text
     )
 
 
@@ -326,7 +326,15 @@ async def test_delete(
             "backups": [
                 {
                     "backup_id": "abc123",
+                    "failed_addons": [
+                        {
+                            "name": "Test add-on",
+                            "slug": "test_addon",
+                            "version": "1.0.0",
+                        }
+                    ],
                     "failed_agent_ids": ["test.remote"],
+                    "failed_folders": ["ssl"],
                 }
             ]
         },
@@ -395,6 +403,7 @@ async def test_agent_delete_backup(
     assert mock_agents["test.remote"].async_delete_backup.call_args == call("abc123")
 
 
+@pytest.mark.usefixtures("mock_ha_version")
 @pytest.mark.parametrize(
     "data",
     [
@@ -403,7 +412,6 @@ async def test_agent_delete_backup(
         {"password": "abc123"},
     ],
 )
-@pytest.mark.usefixtures("mock_backup_generation")
 async def test_generate(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
@@ -470,7 +478,6 @@ async def test_generate_wrong_parameters(
     }
 
 
-@pytest.mark.usefixtures("mock_backup_generation")
 @pytest.mark.parametrize(
     ("params", "expected_extra_call_params"),
     [
@@ -791,8 +798,8 @@ async def test_restore_remote_agent_get_backup_returns_none(
     assert await client.receive_json() == snapshot
     assert len(restart_calls) == 0
     assert (
-        "Detected that integration 'test' returns None from BackupAgent.async_get_backup."
-        in caplog.text
+        "Detected that integration 'test' returns None from"
+        " BackupAgent.async_get_backup." in caplog.text
     )
 
 
@@ -1001,7 +1008,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": DAILY,
                             "recurrence": "custom_days",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1033,7 +1039,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": [],
                             "recurrence": "never",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1065,7 +1070,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": [],
                             "recurrence": "never",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1097,7 +1101,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": ["mon"],
                             "recurrence": "custom_days",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1129,7 +1132,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": [],
                             "recurrence": "never",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1161,7 +1163,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": ["mon", "sun"],
                             "recurrence": "custom_days",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1196,7 +1197,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": ["mon", "sun"],
                             "recurrence": "custom_days",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1228,7 +1228,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": [],
                             "recurrence": "never",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1260,7 +1259,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": [],
                             "recurrence": "never",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1301,7 +1299,6 @@ async def test_agents_info(
                         "schedule": {
                             "days": ["mon", "sun"],
                             "recurrence": "custom_days",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -1952,7 +1949,6 @@ async def test_config_schedule_logic(
             "schedule": {
                 "days": [],
                 "recurrence": "daily",
-                "state": "never",
                 "time": None,
             },
         },
@@ -2862,7 +2858,6 @@ async def test_config_retention_copies_logic(
             "schedule": {
                 "days": [],
                 "recurrence": "daily",
-                "state": "never",
                 "time": None,
             },
         },
@@ -3141,7 +3136,6 @@ async def test_config_retention_copies_logic_manual_backup(
             "schedule": {
                 "days": [],
                 "recurrence": "daily",
-                "state": "never",
                 "time": None,
             },
         },
@@ -3806,7 +3800,6 @@ async def test_config_retention_days_logic(
             "schedule": {
                 "days": [],
                 "recurrence": "never",
-                "state": "never",
                 "time": None,
             },
         },
@@ -3878,7 +3871,6 @@ async def test_configured_agents_unavailable_repair(
                         "schedule": {
                             "days": ["mon"],
                             "recurrence": "custom_days",
-                            "state": "never",
                             "time": None,
                         },
                     },
@@ -4047,29 +4039,6 @@ async def test_subscribe_event(
     assert await client.receive_json() == snapshot
 
 
-async def test_subscribe_event_early(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    snapshot: SnapshotAssertion,
-) -> None:
-    """Test subscribe event before backup integration has started."""
-    async_initialize_backup(hass)
-    await setup_backup_integration(hass, with_hassio=False)
-
-    client = await hass_ws_client(hass)
-    await client.send_json_auto_id({"type": "backup/subscribe_events"})
-    assert await client.receive_json() == snapshot
-
-    assert await async_setup_component(hass, DOMAIN, {})
-    await hass.async_block_till_done()
-    manager = hass.data[DATA_MANAGER]
-
-    manager.async_on_backup_event(
-        CreateBackupEvent(stage=None, state=CreateBackupState.IN_PROGRESS, reason=None)
-    )
-    assert await client.receive_json() == snapshot
-
-
 @pytest.mark.parametrize(
     ("agent_id", "backup_id", "password"),
     [
@@ -4079,8 +4048,10 @@ async def test_subscribe_event_early(
         # Legacy backup, which can't be streamed
         ("backup.local", "2bcb3113", "hunter2"),
         # New backup, which can be streamed, try with correct and wrong password
-        ("backup.local", "c0cb53bd", "hunter2"),
-        ("backup.local", "c0cb53bd", "wrong_password"),
+        ("backup.local", "backup_compressed_protected_v2", "hunter2"),
+        ("backup.local", "backup_compressed_protected_v2", "wrong_password"),
+        ("backup.local", "backup_compressed_protected_v3", "hunter2"),
+        ("backup.local", "backup_compressed_protected_v3", "wrong_password"),
     ],
 )
 @pytest.mark.usefixtures("mock_backups")
@@ -4168,6 +4139,6 @@ async def test_can_decrypt_on_download_get_backup_returns_none(
     )
     assert await client.receive_json() == snapshot
     assert (
-        "Detected that integration 'test' returns None from BackupAgent.async_get_backup."
-        in caplog.text
+        "Detected that integration 'test' returns None from"
+        " BackupAgent.async_get_backup." in caplog.text
     )

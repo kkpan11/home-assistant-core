@@ -1,7 +1,5 @@
 """Generic platform."""
 
-from __future__ import annotations
-
 from devolo_plc_api.device_api import (
     ConnectedStationInfo,
     NeighborAPInfo,
@@ -15,14 +13,13 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, Device
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import DevoloHomeNetworkConfigEntry
 from .const import DOMAIN
-from .coordinator import DevoloDataUpdateCoordinator
+from .coordinator import DevoloDataUpdateCoordinator, DevoloHomeNetworkConfigEntry
 
 type _DataType = (
     LogicalNetwork
     | DataRate
-    | list[ConnectedStationInfo]
+    | dict[str, ConnectedStationInfo]
     | list[NeighborAPInfo]
     | WifiGuestAccessGet
     | bool

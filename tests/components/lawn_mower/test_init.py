@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from homeassistant.components.lawn_mower import (
-    DOMAIN as LAWN_MOWER_DOMAIN,
+    DOMAIN,
     LawnMowerActivity,
     LawnMowerEntity,
     LawnMowerEntityFeature,
@@ -104,7 +104,7 @@ async def test_lawn_mower_setup(hass: HomeAssistant) -> None:
 
     mock_platform(
         hass,
-        f"{TEST_DOMAIN}.{LAWN_MOWER_DOMAIN}",
+        f"{TEST_DOMAIN}.{DOMAIN}",
         MockPlatform(async_setup_entry=async_setup_entry_platform),
     )
 
@@ -158,6 +158,17 @@ async def test_sync_pause(hass: HomeAssistant) -> None:
     await lawn_mower.async_pause()
 
     assert lawn_mower.pause.called
+
+
+async def test_sync_stop(hass: HomeAssistant) -> None:
+    """Test if async stop calls sync stop."""
+    lawn_mower = MockLawnMowerEntity()
+    lawn_mower.hass = hass
+
+    lawn_mower.stop = MagicMock()
+    await lawn_mower.async_stop()
+
+    assert lawn_mower.stop.called
 
 
 async def test_lawn_mower_default(hass: HomeAssistant) -> None:

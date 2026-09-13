@@ -5,8 +5,14 @@ from http import HTTPStatus
 from unittest.mock import patch
 
 from airly.exceptions import AirlyError
-from syrupy import SnapshotAssertion
+import pytest
+from syrupy.assertion import SnapshotAssertion
 
+from homeassistant.components.airly.const import DOMAIN
+from homeassistant.components.homeassistant import (
+    DOMAIN as HOMEASSISTANT_DOMAIN,
+    SERVICE_UPDATE_ENTITY,
+)
 from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -15,7 +21,7 @@ from homeassistant.util.dt import utcnow
 
 from . import API_POINT_URL, init_integration
 
-from tests.common import async_fire_time_changed, load_fixture
+from tests.common import async_fire_time_changed, async_load_fixture
 from tests.test_util.aiohttp import AiohttpClientMocker
 
 
@@ -38,10 +44,22 @@ async def test_sensor(
         assert state == snapshot(name=f"{entity_entry.entity_id}-state")
 
 
+@pytest.mark.parametrize(
+    "exception",
+    [
+        AirlyError(HTTPStatus.NOT_FOUND, {"message": "Not found"}),
+        TimeoutError(),
+    ],
+)
 async def test_availability(
-    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    exception: Exception,
 ) -> None:
-    """Ensure that we mark the entities unavailable correctly when service is offline."""
+    """Ensure that we mark the entities unavailable correctly.
+
+    Test when service is offline.
+    """
     await init_integration(hass, aioclient_mock)
 
     state = hass.states.get("sensor.home_humidity")
@@ -50,9 +68,7 @@ async def test_availability(
     assert state.state == "68.35"
 
     aioclient_mock.clear_requests()
-    aioclient_mock.get(
-        API_POINT_URL, exc=AirlyError(HTTPStatus.NOT_FOUND, {"message": "Not found"})
-    )
+    aioclient_mock.get(API_POINT_URL, exc=exception)
     future = utcnow() + timedelta(minutes=60)
     async_fire_time_changed(hass, future)
     await hass.async_block_till_done()
@@ -62,7 +78,9 @@ async def test_availability(
     assert state.state == STATE_UNAVAILABLE
 
     aioclient_mock.clear_requests()
-    aioclient_mock.get(API_POINT_URL, text=load_fixture("valid_station.json", "airly"))
+    aioclient_mock.get(
+        API_POINT_URL, text=await async_load_fixture(hass, "valid_station.json", DOMAIN)
+    )
     future = utcnow() + timedelta(minutes=120)
     async_fire_time_changed(hass, future)
     await hass.async_block_till_done()
@@ -80,10 +98,10 @@ async def test_manual_update_entity(
     await init_integration(hass, aioclient_mock)
 
     call_count = aioclient_mock.call_count
-    await async_setup_component(hass, "homeassistant", {})
+    await async_setup_component(hass, HOMEASSISTANT_DOMAIN, {})
     await hass.services.async_call(
-        "homeassistant",
-        "update_entity",
+        HOMEASSISTANT_DOMAIN,
+        SERVICE_UPDATE_ENTITY,
         {ATTR_ENTITY_ID: ["sensor.home_humidity"]},
         blocking=True,
     )

@@ -1,14 +1,12 @@
 """The Adax integration."""
 
-from __future__ import annotations
-
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .const import CONNECTION_TYPE, LOCAL
 from .coordinator import AdaxCloudCoordinator, AdaxConfigEntry, AdaxLocalCoordinator
 
-PLATFORMS = [Platform.CLIMATE]
+PLATFORMS = [Platform.CLIMATE, Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AdaxConfigEntry) -> bool:

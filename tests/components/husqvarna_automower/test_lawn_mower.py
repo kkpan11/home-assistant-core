@@ -42,6 +42,11 @@ from tests.common import MockConfigEntry, async_fire_time_changed
             MowerStates.IN_OPERATION,
             LawnMowerActivity.DOCKED,
         ),
+        (
+            MowerActivities.GOING_HOME,
+            MowerStates.RESTRICTED,
+            LawnMowerActivity.RETURNING,
+        ),
     ],
 )
 async def test_lawn_mower_states(
@@ -56,7 +61,7 @@ async def test_lawn_mower_states(
 ) -> None:
     """Test lawn_mower state."""
     await setup_integration(hass, mock_config_entry)
-    state = hass.states.get("lawn_mower.test_mower_1")
+    state = hass.states.get("lawn_mower.garden_test_mower_1")
     assert state is not None
     assert state.state == LawnMowerActivity.DOCKED
     values[TEST_MOWER_ID].mower.activity = activity
@@ -65,7 +70,7 @@ async def test_lawn_mower_states(
     freezer.tick(SCAN_INTERVAL)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    state = hass.states.get("lawn_mower.test_mower_1")
+    state = hass.states.get("lawn_mower.garden_test_mower_1")
     assert state.state == expected_state
 
 
@@ -89,7 +94,7 @@ async def test_lawn_mower_commands(
     await hass.services.async_call(
         domain="lawn_mower",
         service=service,
-        service_data={"entity_id": "lawn_mower.test_mower_1"},
+        service_data={"entity_id": "lawn_mower.garden_test_mower_1"},
         blocking=True,
     )
     mocked_method = getattr(mock_automower_client.commands, aioautomower_command)
@@ -103,7 +108,7 @@ async def test_lawn_mower_commands(
         await hass.services.async_call(
             domain="lawn_mower",
             service=service,
-            target={"entity_id": "lawn_mower.test_mower_1"},
+            target={"entity_id": "lawn_mower.garden_test_mower_1"},
             blocking=True,
         )
 
@@ -146,7 +151,7 @@ async def test_lawn_mower_service_commands(
     await hass.services.async_call(
         domain=DOMAIN,
         service=service,
-        target={"entity_id": "lawn_mower.test_mower_1"},
+        target={"entity_id": "lawn_mower.garden_test_mower_1"},
         service_data=service_data,
         blocking=True,
     )
@@ -160,7 +165,7 @@ async def test_lawn_mower_service_commands(
         await hass.services.async_call(
             domain=DOMAIN,
             service=service,
-            target={"entity_id": "lawn_mower.test_mower_1"},
+            target={"entity_id": "lawn_mower.garden_test_mower_1"},
             service_data=service_data,
             blocking=True,
         )
@@ -197,7 +202,7 @@ async def test_lawn_mower_override_work_area_command(
     await hass.services.async_call(
         domain=DOMAIN,
         service=service,
-        target={"entity_id": "lawn_mower.test_mower_1"},
+        target={"entity_id": "lawn_mower.garden_test_mower_1"},
         service_data=service_data,
         blocking=True,
     )
@@ -213,7 +218,7 @@ async def test_lawn_mower_override_work_area_command(
         await hass.services.async_call(
             domain=DOMAIN,
             service=service,
-            target={"entity_id": "lawn_mower.test_mower_1"},
+            target={"entity_id": "lawn_mower.garden_test_mower_1"},
             service_data=service_data,
             blocking=True,
         )
@@ -273,7 +278,7 @@ async def test_lawn_mower_wrong_service_commands(
         await hass.services.async_call(
             domain=DOMAIN,
             service=service,
-            target={"entity_id": "lawn_mower.test_mower_1"},
+            target={"entity_id": "lawn_mower.garden_test_mower_1"},
             service_data=service_data,
             blocking=True,
         )

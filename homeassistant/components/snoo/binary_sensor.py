@@ -1,9 +1,8 @@
 """Support for Snoo Binary Sensors."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import override
 
 from python_snoo.containers import SnooData
 
@@ -38,7 +37,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[SnooBinarySensorEntityDescription] = [
     SnooBinarySensorEntityDescription(
         key="right_clip",
         translation_key="right_clip",
-        value_fn=lambda data: data.left_safety_clip,
+        value_fn=lambda data: data.right_safety_clip,
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
@@ -65,6 +64,7 @@ class SnooBinarySensor(SnooDescriptionEntity, BinarySensorEntity):
     entity_description: SnooBinarySensorEntityDescription
 
     @property
+    @override
     def is_on(self) -> bool:
         """Return true if the binary sensor is on."""
         return self.entity_description.value_fn(self.coordinator.data)

@@ -3,8 +3,8 @@
   list([
     DeviceRegistryEntrySnapshot({
       'area_id': None,
-      'config_entries': <ANY>,
-      'config_entries_subentries': <ANY>,
+      'config_entry_id': <ANY>,
+      'config_subentry_id': <ANY>,
       'configuration_url': None,
       'connections': set({
       }),
@@ -18,7 +18,6 @@
           'VF1CAPTURFUELVIN',
         ),
       }),
-      'is_new': False,
       'labels': set({
       }),
       'manufacturer': 'Renault',
@@ -26,9 +25,7 @@
       'model_id': 'XJB1SU',
       'name': 'REG-CAPTUR-FUEL',
       'name_by_user': None,
-      'primary_config_entry': <ANY>,
       'serial_number': None,
-      'suggested_area': None,
       'sw_version': None,
       'via_device_id': None,
     }),
@@ -38,8 +35,8 @@
   list([
     DeviceRegistryEntrySnapshot({
       'area_id': None,
-      'config_entries': <ANY>,
-      'config_entries_subentries': <ANY>,
+      'config_entry_id': <ANY>,
+      'config_subentry_id': <ANY>,
       'configuration_url': None,
       'connections': set({
       }),
@@ -53,7 +50,6 @@
           'VF1CAPTURPHEVVIN',
         ),
       }),
-      'is_new': False,
       'labels': set({
       }),
       'manufacturer': 'Renault',
@@ -61,9 +57,39 @@
       'model_id': 'XJB1SU',
       'name': 'REG-CAPTUR_PHEV',
       'name_by_user': None,
-      'primary_config_entry': <ANY>,
       'serial_number': None,
-      'suggested_area': None,
+      'sw_version': None,
+      'via_device_id': None,
+    }),
+  ])
+# ---
+# name: test_device_registry[megane_e_tech]
+  list([
+    DeviceRegistryEntrySnapshot({
+      'area_id': None,
+      'config_entry_id': <ANY>,
+      'config_subentry_id': <ANY>,
+      'configuration_url': None,
+      'connections': set({
+      }),
+      'disabled_by': None,
+      'entry_type': None,
+      'hw_version': None,
+      'id': <ANY>,
+      'identifiers': set({
+        tuple(
+          'renault',
+          'VF1MEGANEETECHVIN',
+        ),
+      }),
+      'labels': set({
+      }),
+      'manufacturer': 'Renault',
+      'model': 'Megane e-tech',
+      'model_id': 'XCB1VE',
+      'name': 'REG-MEG-0',
+      'name_by_user': None,
+      'serial_number': None,
       'sw_version': None,
       'via_device_id': None,
     }),
@@ -73,8 +99,8 @@
   list([
     DeviceRegistryEntrySnapshot({
       'area_id': None,
-      'config_entries': <ANY>,
-      'config_entries_subentries': <ANY>,
+      'config_entry_id': <ANY>,
+      'config_subentry_id': <ANY>,
       'configuration_url': None,
       'connections': set({
       }),
@@ -88,7 +114,6 @@
           'VF1TWINGOIIIVIN',
         ),
       }),
-      'is_new': False,
       'labels': set({
       }),
       'manufacturer': 'Renault',
@@ -96,9 +121,7 @@
       'model_id': 'X071VE',
       'name': 'REG-TWINGO-III',
       'name_by_user': None,
-      'primary_config_entry': <ANY>,
       'serial_number': None,
-      'suggested_area': None,
       'sw_version': None,
       'via_device_id': None,
     }),
@@ -108,8 +131,8 @@
   list([
     DeviceRegistryEntrySnapshot({
       'area_id': None,
-      'config_entries': <ANY>,
-      'config_entries_subentries': <ANY>,
+      'config_entry_id': <ANY>,
+      'config_subentry_id': <ANY>,
       'configuration_url': None,
       'connections': set({
       }),
@@ -123,7 +146,6 @@
           'VF1ZOE40VIN',
         ),
       }),
-      'is_new': False,
       'labels': set({
       }),
       'manufacturer': 'Renault',
@@ -131,9 +153,7 @@
       'model_id': 'X101VE',
       'name': 'REG-ZOE-40',
       'name_by_user': None,
-      'primary_config_entry': <ANY>,
       'serial_number': None,
-      'suggested_area': None,
       'sw_version': None,
       'via_device_id': None,
     }),
@@ -143,8 +163,8 @@
   list([
     DeviceRegistryEntrySnapshot({
       'area_id': None,
-      'config_entries': <ANY>,
-      'config_entries_subentries': <ANY>,
+      'config_entry_id': <ANY>,
+      'config_subentry_id': <ANY>,
       'configuration_url': None,
       'connections': set({
       }),
@@ -158,7 +178,6 @@
           'VF1ZOE50VIN',
         ),
       }),
-      'is_new': False,
       'labels': set({
       }),
       'manufacturer': 'Renault',
@@ -166,9 +185,7 @@
       'model_id': 'X102VE',
       'name': 'REG-ZOE-50',
       'name_by_user': None,
-      'primary_config_entry': <ANY>,
       'serial_number': None,
-      'suggested_area': None,
       'sw_version': None,
       'via_device_id': None,
     }),

@@ -111,28 +111,28 @@ async def test_mqtt_state_by_calling_service(
     # Turn relay ON
     await call_service(hass, "switch.test_relay_0", SERVICE_TURN_ON)
     mqtt_mock.async_publish.assert_called_once_with(
-        "pglab/test/relay/0/set", "ON", 0, False
+        "pglab/test/relay/0/set", "ON", 0, False, message_expiry_interval=None
     )
     mqtt_mock.async_publish.reset_mock()
 
     # Turn relay OFF
     await call_service(hass, "switch.test_relay_0", SERVICE_TURN_OFF)
     mqtt_mock.async_publish.assert_called_once_with(
-        "pglab/test/relay/0/set", "OFF", 0, False
+        "pglab/test/relay/0/set", "OFF", 0, False, message_expiry_interval=None
     )
     mqtt_mock.async_publish.reset_mock()
 
     # Turn relay ON
     await call_service(hass, "switch.test_relay_3", SERVICE_TURN_ON)
     mqtt_mock.async_publish.assert_called_once_with(
-        "pglab/test/relay/3/set", "ON", 0, False
+        "pglab/test/relay/3/set", "ON", 0, False, message_expiry_interval=None
     )
     mqtt_mock.async_publish.reset_mock()
 
     # Turn relay OFF
     await call_service(hass, "switch.test_relay_3", SERVICE_TURN_OFF)
     mqtt_mock.async_publish.assert_called_once_with(
-        "pglab/test/relay/3/set", "OFF", 0, False
+        "pglab/test/relay/3/set", "OFF", 0, False, message_expiry_interval=None
     )
     mqtt_mock.async_publish.reset_mock()
 
@@ -166,12 +166,16 @@ async def test_discovery_update(
 
     await send_discovery_message(hass, payload)
 
-    # be sure that old relay are been removed
+    # entity id from the old relay configuration should be reused
     for i in range(8):
-        assert not hass.states.get(f"switch.first_test_relay_{i}")
+        state = hass.states.get(f"switch.first_test_relay_{i}")
+        assert state.state == STATE_UNKNOWN
+        assert not state.attributes.get(ATTR_ASSUMED_STATE)
+    for i in range(8):
+        assert not hass.states.get(f"switch.second_test_relay_{i}")
 
     # check new relay
-    for i in range(16):
+    for i in range(8, 16):
         state = hass.states.get(f"switch.second_test_relay_{i}")
         assert state.state == STATE_UNKNOWN
         assert not state.attributes.get(ATTR_ASSUMED_STATE)

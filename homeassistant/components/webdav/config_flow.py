@@ -1,11 +1,13 @@
 """Config flow for the WebDAV integration."""
 
-from __future__ import annotations
-
 import logging
-from typing import Any
+from typing import Any, override
 
-from aiowebdav2.exceptions import MethodNotSupportedError, UnauthorizedError
+from aiowebdav2.exceptions import (
+    AccessDeniedError,
+    MethodNotSupportedError,
+    UnauthorizedError,
+)
 import voluptuous as vol
 import yarl
 
@@ -44,6 +46,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 class WebDavConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WebDAV."""
 
+    @override
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -65,6 +68,8 @@ class WebDavConfigFlow(ConfigFlow, domain=DOMAIN):
                 result = await client.check()
             except UnauthorizedError:
                 errors["base"] = "invalid_auth"
+            except AccessDeniedError:
+                errors["base"] = "access_denied"
             except MethodNotSupportedError:
                 errors["base"] = "invalid_method"
             except Exception:

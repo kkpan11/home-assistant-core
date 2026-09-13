@@ -1,42 +1,47 @@
 """Support for locks which integrates with other components."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any, Self, override
 
 import voluptuous as vol
 
 from homeassistant.components.lock import (
-    PLATFORM_SCHEMA as LOCK_PLATFORM_SCHEMA,
+    DOMAIN as LOCK_DOMAIN,
+    ENTITY_ID_FORMAT,
     LockEntity,
     LockEntityFeature,
+    LockEntityStateAttribute,
     LockState,
 )
-from homeassistant.const import (
-    ATTR_CODE,
-    CONF_NAME,
-    CONF_OPTIMISTIC,
-    CONF_STATE,
-    CONF_UNIQUE_ID,
-    CONF_VALUE_TEMPLATE,
-)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import ATTR_CODE, CONF_NAME, CONF_STATE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError, TemplateError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import (
+    AddConfigEntryEntitiesCallback,
+    AddEntitiesCallback,
+)
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from .const import CONF_PICTURE, DOMAIN
-from .template_entity import (
-    LEGACY_FIELDS as TEMPLATE_ENTITY_LEGACY_FIELDS,
-    TEMPLATE_ENTITY_AVAILABILITY_SCHEMA,
-    TEMPLATE_ENTITY_AVAILABILITY_SCHEMA_LEGACY,
-    TEMPLATE_ENTITY_ICON_SCHEMA,
-    TemplateEntity,
-    rewrite_common_legacy_to_modern_conf,
+from . import validators as tcv
+from .const import DOMAIN
+from .coordinator import TriggerUpdateCoordinator
+from .entity import AbstractTemplateEntity
+from .helpers import (
+    async_setup_template_entry,
+    async_setup_template_platform,
+    async_setup_template_preview,
 )
+from .schemas import (
+    TEMPLATE_ENTITY_COMMON_CONFIG_ENTRY_SCHEMA,
+    TEMPLATE_ENTITY_OPTIMISTIC_SCHEMA,
+    make_template_entity_common_schema,
+)
+from .template_entity import TemplateEntity
+from .trigger_entity import TriggerEntity
 
-CONF_CODE_FORMAT_TEMPLATE = "code_format_template"
 CONF_CODE_FORMAT = "code_format"
 CONF_LOCK = "lock"
 CONF_UNLOCK = "unlock"
@@ -45,69 +50,34 @@ CONF_OPEN = "open"
 DEFAULT_NAME = "Template Lock"
 DEFAULT_OPTIMISTIC = False
 
-LEGACY_FIELDS = TEMPLATE_ENTITY_LEGACY_FIELDS | {
-    CONF_CODE_FORMAT_TEMPLATE: CONF_CODE_FORMAT,
-    CONF_VALUE_TEMPLATE: CONF_STATE,
-}
-
-LOCK_SCHEMA = vol.All(
-    vol.Schema(
-        {
-            vol.Optional(CONF_CODE_FORMAT): cv.template,
-            vol.Required(CONF_LOCK): cv.SCRIPT_SCHEMA,
-            vol.Optional(CONF_NAME): cv.template,
-            vol.Optional(CONF_OPEN): cv.SCRIPT_SCHEMA,
-            vol.Optional(CONF_OPTIMISTIC, default=DEFAULT_OPTIMISTIC): cv.boolean,
-            vol.Optional(CONF_PICTURE): cv.template,
-            vol.Required(CONF_STATE): cv.template,
-            vol.Optional(CONF_UNIQUE_ID): cv.string,
-            vol.Required(CONF_UNLOCK): cv.SCRIPT_SCHEMA,
-        }
-    )
-    .extend(TEMPLATE_ENTITY_AVAILABILITY_SCHEMA.schema)
-    .extend(TEMPLATE_ENTITY_ICON_SCHEMA.schema),
+SCRIPT_FIELDS = (
+    CONF_LOCK,
+    CONF_OPEN,
+    CONF_UNLOCK,
 )
 
 
-PLATFORM_SCHEMA = LOCK_PLATFORM_SCHEMA.extend(
+LOCK_COMMON_SCHEMA = vol.Schema(
     {
-        vol.Optional(CONF_CODE_FORMAT_TEMPLATE): cv.template,
+        vol.Optional(CONF_CODE_FORMAT): cv.template,
         vol.Required(CONF_LOCK): cv.SCRIPT_SCHEMA,
-        vol.Optional(CONF_NAME): cv.string,
         vol.Optional(CONF_OPEN): cv.SCRIPT_SCHEMA,
-        vol.Optional(CONF_OPTIMISTIC, default=DEFAULT_OPTIMISTIC): cv.boolean,
-        vol.Optional(CONF_UNIQUE_ID): cv.string,
+        vol.Optional(CONF_STATE): cv.template,
         vol.Required(CONF_UNLOCK): cv.SCRIPT_SCHEMA,
-        vol.Required(CONF_VALUE_TEMPLATE): cv.template,
     }
-).extend(TEMPLATE_ENTITY_AVAILABILITY_SCHEMA_LEGACY.schema)
+)
 
+_BLOCKED_ATTRIBUTES = tcv.BlockedTemplateAttributes(attributes=LockEntityStateAttribute)
 
-@callback
-def _async_create_template_tracking_entities(
-    async_add_entities: AddEntitiesCallback,
-    hass: HomeAssistant,
-    definitions: list[dict],
-    unique_id_prefix: str | None,
-) -> None:
-    """Create the template fans."""
-    fans = []
+LOCK_YAML_SCHEMA = LOCK_COMMON_SCHEMA.extend(TEMPLATE_ENTITY_OPTIMISTIC_SCHEMA).extend(
+    make_template_entity_common_schema(
+        LOCK_DOMAIN, DEFAULT_NAME, _BLOCKED_ATTRIBUTES
+    ).schema
+)
 
-    for entity_conf in definitions:
-        unique_id = entity_conf.get(CONF_UNIQUE_ID)
-
-        if unique_id and unique_id_prefix:
-            unique_id = f"{unique_id_prefix}-{unique_id}"
-
-        fans.append(
-            TemplateLock(
-                hass,
-                entity_conf,
-                unique_id,
-            )
-        )
-
-    async_add_entities(fans)
+LOCK_CONFIG_ENTRY_SCHEMA = LOCK_COMMON_SCHEMA.extend(
+    TEMPLATE_ENTITY_COMMON_CONFIG_ENTRY_SCHEMA.schema
+)
 
 
 async def async_setup_platform(
@@ -117,161 +87,162 @@ async def async_setup_platform(
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up the template fans."""
-    if discovery_info is None:
-        _async_create_template_tracking_entities(
-            async_add_entities,
-            hass,
-            [rewrite_common_legacy_to_modern_conf(hass, config, LEGACY_FIELDS)],
-            None,
-        )
-        return
-
-    _async_create_template_tracking_entities(
-        async_add_entities,
+    await async_setup_template_platform(
         hass,
-        discovery_info["entities"],
-        discovery_info["unique_id"],
+        LOCK_DOMAIN,
+        config,
+        StateLockEntity,
+        TriggerLockEntity,
+        async_add_entities,
+        discovery_info,
+        script_options=SCRIPT_FIELDS,
     )
 
 
-class TemplateLock(TemplateEntity, LockEntity):
-    """Representation of a template lock."""
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Initialize config entry."""
+    await async_setup_template_entry(
+        hass,
+        config_entry,
+        async_add_entities,
+        StateLockEntity,
+        LOCK_CONFIG_ENTRY_SCHEMA,
+        script_options=SCRIPT_FIELDS,
+    )
 
-    _attr_should_poll = False
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        config: dict[str, Any],
-        unique_id: str | None,
-    ) -> None:
-        """Initialize the lock."""
-        super().__init__(
-            hass, config=config, fallback_name=DEFAULT_NAME, unique_id=unique_id
+@callback
+def async_create_preview_lock(
+    hass: HomeAssistant, name: str, config: dict[str, Any]
+) -> StateLockEntity:
+    """Create a preview."""
+    return async_setup_template_preview(
+        hass,
+        name,
+        config,
+        StateLockEntity,
+        LOCK_CONFIG_ENTRY_SCHEMA,
+    )
+
+
+@dataclass(kw_only=True)
+class LockExtraStoredData(ExtraStoredData):
+    """Holds extra stored data for template lock entities."""
+
+    code_format: str | None
+    is_locked: bool | None
+    is_locking: bool | None
+    is_open: bool | None
+    is_opening: bool | None
+    is_unlocking: bool | None
+    is_jammed: bool | None
+
+    @override
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the lock data."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, restored: dict[str, Any]) -> Self | None:
+        """Initialize a stored lock state from a dict."""
+        try:
+            return cls(
+                code_format=restored["code_format"],
+                is_locked=restored["is_locked"],
+                is_locking=restored["is_locking"],
+                is_open=restored["is_open"],
+                is_opening=restored["is_opening"],
+                is_unlocking=restored["is_unlocking"],
+                is_jammed=restored["is_jammed"],
+            )
+        except KeyError:
+            return None
+
+
+class AbstractTemplateLock(AbstractTemplateEntity, LockEntity, RestoreEntity):
+    """Representation of a template lock features."""
+
+    _entity_id_format = ENTITY_ID_FORMAT
+    _optimistic_entity = True
+    _state_option = CONF_STATE
+    _restore_state_extra_data = LockExtraStoredData
+    _restore_state_properties = ("_attr_is_locked",)
+    _blocked_attributes = _BLOCKED_ATTRIBUTES
+
+    # The super init is not called because TemplateEntity
+    # and TriggerEntity will call
+    # AbstractTemplateEntity.__init__. This ensures that
+    # the __init__ on AbstractTemplateEntity is not
+    # called twice.
+    def __init__(self, name: str, config: dict[str, Any]) -> None:  # pylint: disable=super-init-not-called
+        """Initialize the features."""
+        self._code_format_template_error: TemplateError | None = None
+
+        self.setup_state_template(
+            "_lock_state",
+            tcv.strenum(
+                self, CONF_STATE, LockState, LockState.LOCKED, LockState.UNLOCKED
+            ),
+            self._set_state,
         )
-        self._state: LockState | None = None
-        name = self._attr_name
-        if TYPE_CHECKING:
-            assert name is not None
 
-        self._state_template = config.get(CONF_STATE)
+        self.setup_template(
+            CONF_CODE_FORMAT,
+            "_attr_code_format",
+            None,
+            self._update_code_format,
+            none_on_template_error=False,
+        )
+
         for action_id, supported_feature in (
             (CONF_LOCK, 0),
             (CONF_UNLOCK, 0),
             (CONF_OPEN, LockEntityFeature.OPEN),
         ):
-            # Scripts can be an empty list, therefore we need to check for None
             if (action_config := config.get(action_id)) is not None:
                 self.add_script(action_id, action_config, name, DOMAIN)
                 self._attr_supported_features |= supported_feature
-        self._code_format_template = config.get(CONF_CODE_FORMAT)
-        self._code_format: str | None = None
-        self._code_format_template_error: TemplateError | None = None
-        self._optimistic = config.get(CONF_OPTIMISTIC)
-        self._attr_assumed_state = bool(self._optimistic)
 
-    @property
-    def is_locked(self) -> bool:
-        """Return true if lock is locked."""
-        return self._state == LockState.LOCKED
+    def _set_state(self, state: LockState | None) -> None:
+        self._attr_is_jammed = state == LockState.JAMMED
+        self._attr_is_opening = state == LockState.OPENING
+        self._attr_is_locking = state == LockState.LOCKING
+        self._attr_is_open = state == LockState.OPEN
+        self._attr_is_unlocking = state == LockState.UNLOCKING
 
-    @property
-    def is_jammed(self) -> bool:
-        """Return true if lock is jammed."""
-        return self._state == LockState.JAMMED
-
-    @property
-    def is_unlocking(self) -> bool:
-        """Return true if lock is unlocking."""
-        return self._state == LockState.UNLOCKING
-
-    @property
-    def is_locking(self) -> bool:
-        """Return true if lock is locking."""
-        return self._state == LockState.LOCKING
-
-    @property
-    def is_open(self) -> bool:
-        """Return true if lock is open."""
-        return self._state == LockState.OPEN
-
-    @callback
-    def _update_state(self, result: str | TemplateError) -> None:
-        """Update the state from the template."""
-        super()._update_state(result)
-        if isinstance(result, TemplateError):
-            self._state = None
-            return
-
-        if isinstance(result, bool):
-            self._state = LockState.LOCKED if result else LockState.UNLOCKED
-            return
-
-        if isinstance(result, str):
-            if result.lower() in (
-                "true",
-                "on",
-                "locked",
-            ):
-                self._state = LockState.LOCKED
-            elif result.lower() in (
-                "false",
-                "off",
-                "unlocked",
-            ):
-                self._state = LockState.UNLOCKED
-            else:
-                try:
-                    self._state = LockState(result.lower())
-                except ValueError:
-                    self._state = None
-            return
-
-        self._state = None
-
-    @property
-    def code_format(self) -> str | None:
-        """Regex for code format or None if no code is required."""
-        return self._code_format
-
-    @callback
-    def _async_setup_templates(self) -> None:
-        """Set up templates."""
-        if TYPE_CHECKING:
-            assert self._state_template is not None
-        self.add_template_attribute(
-            "_state", self._state_template, None, self._update_state
-        )
-        if self._code_format_template:
-            self.add_template_attribute(
-                "_code_format_template",
-                self._code_format_template,
-                None,
-                self._update_code_format,
-            )
-        super()._async_setup_templates()
+        # All other parameters need to be set False in order
+        # for the lock to be unknown.
+        if state is None:
+            self._attr_is_locked = state
+        else:
+            self._attr_is_locked = state == LockState.LOCKED
 
     @callback
     def _update_code_format(self, render: str | TemplateError | None):
         """Update code format from the template."""
         if isinstance(render, TemplateError):
-            self._code_format = None
+            self._attr_code_format = None
             self._code_format_template_error = render
         elif render in (None, "None", ""):
-            self._code_format = None
+            self._attr_code_format = None
             self._code_format_template_error = None
         else:
-            self._code_format = render
+            self._attr_code_format = render
             self._code_format_template_error = None
 
+    @override
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the device."""
         # Check if we need to raise for incorrect code format
         # template before processing the action.
         self._raise_template_error_if_available()
 
-        if self._optimistic:
-            self._state = LockState.LOCKED
+        if self._attr_assumed_state:
+            self._set_state(LockState.LOCKED)
             self.async_write_ha_state()
 
         tpl_vars = {ATTR_CODE: kwargs.get(ATTR_CODE) if kwargs else None}
@@ -282,14 +253,15 @@ class TemplateLock(TemplateEntity, LockEntity):
             context=self._context,
         )
 
+    @override
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the device."""
         # Check if we need to raise for incorrect code format
         # template before processing the action.
         self._raise_template_error_if_available()
 
-        if self._optimistic:
-            self._state = LockState.UNLOCKED
+        if self._attr_assumed_state:
+            self._set_state(LockState.UNLOCKED)
             self.async_write_ha_state()
 
         tpl_vars = {ATTR_CODE: kwargs.get(ATTR_CODE) if kwargs else None}
@@ -300,14 +272,15 @@ class TemplateLock(TemplateEntity, LockEntity):
             context=self._context,
         )
 
+    @override
     async def async_open(self, **kwargs: Any) -> None:
         """Open the device."""
         # Check if we need to raise for incorrect code format
         # template before processing the action.
         self._raise_template_error_if_available()
 
-        if self._optimistic:
-            self._state = LockState.OPEN
+        if self._attr_assumed_state:
+            self._set_state(LockState.OPEN)
             self.async_write_ha_state()
 
         tpl_vars = {ATTR_CODE: kwargs.get(ATTR_CODE) if kwargs else None}
@@ -326,7 +299,68 @@ class TemplateLock(TemplateEntity, LockEntity):
                 translation_key="code_format_template_error",
                 translation_placeholders={
                     "entity_id": self.entity_id,
-                    "code_format_template": self._code_format_template.template,
+                    "code_format_template": self._templates[CONF_CODE_FORMAT].template,
                     "cause": str(self._code_format_template_error),
                 },
             )
+
+    @property
+    @override
+    def extra_restore_state_data(self) -> LockExtraStoredData:
+        """Return lock specific state data to be restored."""
+        return LockExtraStoredData(
+            code_format=self._attr_code_format,
+            is_locked=self._attr_is_locked,
+            is_locking=self._attr_is_locking,
+            is_open=self._attr_is_open,
+            is_opening=self._attr_is_opening,
+            is_unlocking=self._attr_is_unlocking,
+            is_jammed=self._attr_is_jammed,
+        )
+
+    @override
+    def restore_extra_data(self, extra_data: LockExtraStoredData) -> None:
+        """Restore the extra data."""
+        self._attr_code_format = extra_data.code_format
+        self._attr_is_locked = extra_data.is_locked
+        self._attr_is_locking = extra_data.is_locking
+        self._attr_is_open = extra_data.is_open
+        self._attr_is_opening = extra_data.is_opening
+        self._attr_is_unlocking = extra_data.is_unlocking
+        self._attr_is_jammed = extra_data.is_jammed
+
+
+class StateLockEntity(TemplateEntity, AbstractTemplateLock):
+    """Representation of a template lock."""
+
+    _attr_should_poll = False
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config: dict[str, Any],
+        unique_id: str | None,
+    ) -> None:
+        """Initialize the lock."""
+        TemplateEntity.__init__(self, hass, config, unique_id)
+        name = self._attr_name
+        if TYPE_CHECKING:
+            assert name is not None
+        AbstractTemplateLock.__init__(self, name, config)
+
+
+class TriggerLockEntity(TriggerEntity, AbstractTemplateLock):
+    """Lock entity based on trigger data."""
+
+    domain = LOCK_DOMAIN
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        coordinator: TriggerUpdateCoordinator,
+        config: ConfigType,
+    ) -> None:
+        """Initialize the entity."""
+        TriggerEntity.__init__(self, hass, coordinator, config)
+        self._attr_name = name = self._rendered.get(CONF_NAME, DEFAULT_NAME)
+        AbstractTemplateLock.__init__(self, name, config)

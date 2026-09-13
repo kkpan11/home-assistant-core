@@ -3,6 +3,7 @@
 import asyncio
 from datetime import timedelta
 import logging
+from typing import override
 
 from pysyncthru import ConnectionMode, SyncThru
 
@@ -28,6 +29,7 @@ class SyncthruCoordinator(DataUpdateCoordinator[SyncThru]):
             hass,
             _LOGGER,
             name=DOMAIN,
+            config_entry=entry,
             update_interval=timedelta(seconds=30),
         )
         self.syncthru = SyncThru(
@@ -36,6 +38,7 @@ class SyncthruCoordinator(DataUpdateCoordinator[SyncThru]):
             connection_mode=ConnectionMode.API,
         )
 
+    @override
     async def _async_update_data(self) -> SyncThru:
         async with asyncio.timeout(10):
             await self.syncthru.update()

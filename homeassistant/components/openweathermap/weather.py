@@ -1,6 +1,6 @@
 """Support for the OpenWeatherMap (OWM) service."""
 
-from __future__ import annotations
+from typing import override
 
 from homeassistant.components.weather import (
     Forecast,
@@ -41,10 +41,11 @@ from .const import (
     DEFAULT_NAME,
     DOMAIN,
     MANUFACTURER,
+    OWM_MODE_AIRPOLLUTION,
     OWM_MODE_FREE_FORECAST,
     OWM_MODE_V30,
 )
-from .coordinator import WeatherUpdateCoordinator
+from .coordinator import OWMUpdateCoordinator
 
 SERVICE_GET_MINUTE_FORECAST = "get_minute_forecast"
 
@@ -56,25 +57,26 @@ async def async_setup_entry(
 ) -> None:
     """Set up OpenWeatherMap weather entity based on a config entry."""
     domain_data = config_entry.runtime_data
-    name = domain_data.name
     mode = domain_data.mode
-    weather_coordinator = domain_data.coordinator
 
-    unique_id = f"{config_entry.unique_id}"
-    owm_weather = OpenWeatherMapWeather(name, unique_id, mode, weather_coordinator)
+    if mode != OWM_MODE_AIRPOLLUTION:
+        weather_coordinator = domain_data.coordinator
 
-    async_add_entities([owm_weather], False)
+        unique_id = f"{config_entry.unique_id}"
+        owm_weather = OpenWeatherMapWeather(unique_id, mode, weather_coordinator)
 
-    platform = entity_platform.async_get_current_platform()
-    platform.async_register_entity_service(
-        name=SERVICE_GET_MINUTE_FORECAST,
-        schema=None,
-        func="async_get_minute_forecast",
-        supports_response=SupportsResponse.ONLY,
-    )
+        async_add_entities([owm_weather], False)
+
+        platform = entity_platform.async_get_current_platform()
+        platform.async_register_entity_service(
+            name=SERVICE_GET_MINUTE_FORECAST,
+            schema=None,
+            func="async_get_minute_forecast",
+            supports_response=SupportsResponse.ONLY,
+        )
 
 
-class OpenWeatherMapWeather(SingleCoordinatorWeatherEntity[WeatherUpdateCoordinator]):
+class OpenWeatherMapWeather(SingleCoordinatorWeatherEntity[OWMUpdateCoordinator]):
     """Implementation of an OpenWeatherMap sensor."""
 
     _attr_attribution = ATTRIBUTION
@@ -90,10 +92,9 @@ class OpenWeatherMapWeather(SingleCoordinatorWeatherEntity[WeatherUpdateCoordina
 
     def __init__(
         self,
-        name: str,
         unique_id: str,
         mode: str,
-        weather_coordinator: WeatherUpdateCoordinator,
+        weather_coordinator: OWMUpdateCoordinator,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(weather_coordinator)
@@ -102,7 +103,6 @@ class OpenWeatherMapWeather(SingleCoordinatorWeatherEntity[WeatherUpdateCoordina
             entry_type=DeviceEntryType.SERVICE,
             identifiers={(DOMAIN, unique_id)},
             manufacturer=MANUFACTURER,
-            name=name,
         )
         self.mode = mode
 
@@ -126,16 +126,19 @@ class OpenWeatherMapWeather(SingleCoordinatorWeatherEntity[WeatherUpdateCoordina
         )
 
     @property
+    @override
     def condition(self) -> str | None:
         """Return the current condition."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_CONDITION)
 
     @property
+    @override
     def cloud_coverage(self) -> float | None:
         """Return the Cloud coverage in %."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_CLOUDS)
 
     @property
+    @override
     def native_apparent_temperature(self) -> float | None:
         """Return the apparent temperature."""
         return self.coordinator.data[ATTR_API_CURRENT].get(
@@ -143,51 +146,61 @@ class OpenWeatherMapWeather(SingleCoordinatorWeatherEntity[WeatherUpdateCoordina
         )
 
     @property
+    @override
     def native_temperature(self) -> float | None:
         """Return the temperature."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_TEMPERATURE)
 
     @property
+    @override
     def native_pressure(self) -> float | None:
         """Return the pressure."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_PRESSURE)
 
     @property
+    @override
     def humidity(self) -> float | None:
         """Return the humidity."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_HUMIDITY)
 
     @property
+    @override
     def native_dew_point(self) -> float | None:
         """Return the dew point."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_DEW_POINT)
 
     @property
+    @override
     def native_wind_gust_speed(self) -> float | None:
         """Return the wind gust speed."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_WIND_GUST)
 
     @property
+    @override
     def native_wind_speed(self) -> float | None:
         """Return the wind speed."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_WIND_SPEED)
 
     @property
+    @override
     def wind_bearing(self) -> float | str | None:
         """Return the wind bearing."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_WIND_BEARING)
 
     @property
-    def visibility(self) -> float | str | None:
+    @override
+    def native_visibility(self) -> float | None:
         """Return visibility."""
         return self.coordinator.data[ATTR_API_CURRENT].get(ATTR_API_VISIBILITY_DISTANCE)
 
     @callback
+    @override
     def _async_forecast_daily(self) -> list[Forecast] | None:
         """Return the daily forecast in native units."""
         return self.coordinator.data[ATTR_API_DAILY_FORECAST]
 
     @callback
+    @override
     def _async_forecast_hourly(self) -> list[Forecast] | None:
         """Return the hourly forecast in native units."""
         return self.coordinator.data[ATTR_API_HOURLY_FORECAST]

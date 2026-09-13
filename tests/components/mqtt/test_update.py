@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from homeassistant.components import mqtt, update
+from homeassistant.components import update
+from homeassistant.components.mqtt.const import DOMAIN
 from homeassistant.components.update import DOMAIN as UPDATE_DOMAIN, SERVICE_INSTALL
 from homeassistant.const import ATTR_ENTITY_ID, STATE_OFF, STATE_ON, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
@@ -42,7 +43,7 @@ from tests.common import async_fire_mqtt_message
 from tests.typing import MqttMockHAClientGenerator, MqttMockPahoClient
 
 DEFAULT_CONFIG = {
-    mqtt.DOMAIN: {
+    DOMAIN: {
         update.DOMAIN: {
             "name": "test",
             "state_topic": "test-topic",
@@ -59,7 +60,7 @@ DEFAULT_CONFIG = {
     [
         (
             {
-                mqtt.DOMAIN: {
+                DOMAIN: {
                     update.DOMAIN: {
                         "state_topic": "test/installed-version",
                         "latest_version_topic": "test/latest-version",
@@ -76,7 +77,7 @@ DEFAULT_CONFIG = {
         ),
         (
             {
-                mqtt.DOMAIN: {
+                DOMAIN: {
                     update.DOMAIN: {
                         "state_topic": "test/installed-version",
                         "latest_version_topic": "test/latest-version",
@@ -132,7 +133,7 @@ async def test_run_update_setup(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/installed-version",
                     "latest_version_topic": "test/latest-version",
@@ -149,7 +150,7 @@ async def test_run_update_setup(
 async def test_run_update_setup_float(
     hass: HomeAssistant, mqtt_mock_entry: MqttMockHAClientGenerator
 ) -> None:
-    """Test that it fetches the given payload when the version is parsable as a number."""
+    """Test payload fetching when version is parsable as a number."""
     installed_version_topic = "test/installed-version"
     latest_version_topic = "test/latest-version"
     await mqtt_mock_entry()
@@ -182,7 +183,7 @@ async def test_run_update_setup_float(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/installed-version",
                     "value_template": "{{ value_json.installed }}",
@@ -211,10 +212,7 @@ async def test_value_template(
     assert state.state == STATE_OFF
     assert state.attributes.get("installed_version") == "1.9.0"
     assert state.attributes.get("latest_version") == "1.9.0"
-    assert (
-        state.attributes.get("entity_picture")
-        == "https://brands.home-assistant.io/_/mqtt/icon.png"
-    )
+    assert state.attributes.get("entity_picture") is None
 
     async_fire_mqtt_message(hass, latest_version_topic, '{"latest":"2.0.0"}')
 
@@ -230,13 +228,19 @@ async def test_value_template(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/update",
                     "value_template": (
-                        "{\"latest_version\":\"{{ value_json['update']['latest_version'] }}\","
-                        "\"installed_version\":\"{{ value_json['update']['installed_version'] }}\","
-                        "\"update_percentage\":{{ value_json['update'].get('progress', 'null') }}}"
+                        '{"latest_version":'
+                        "\"{{ value_json['update']"
+                        "['latest_version'] }}\","
+                        '"installed_version":'
+                        "\"{{ value_json['update']"
+                        "['installed_version'] }}\","
+                        '"update_percentage":'
+                        "{{ value_json['update']"
+                        ".get('progress', 'null') }}}"
                     ),
                     "name": "Test Update",
                 }
@@ -249,7 +253,7 @@ async def test_errornous_value_template(
     mqtt_mock_entry: MqttMockHAClientGenerator,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test that it fetches the given payload with a template or handles the exception."""
+    """Test payload fetching with template or exception handling."""
     state_topic = "test/update"
     await mqtt_mock_entry()
 
@@ -295,7 +299,7 @@ async def test_errornous_value_template(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/installed-version",
                     "value_template": "{{ value_json.installed }}",
@@ -310,7 +314,7 @@ async def test_errornous_value_template(
 async def test_value_template_float(
     hass: HomeAssistant, mqtt_mock_entry: MqttMockHAClientGenerator
 ) -> None:
-    """Test that it fetches the given payload with a template when the version is parsable as a number."""
+    """Test template payload when version is parsable as a number."""
     installed_version_topic = "test/installed-version"
     latest_version_topic = "test/latest-version"
     await mqtt_mock_entry()
@@ -324,10 +328,7 @@ async def test_value_template_float(
     assert state.state == STATE_OFF
     assert state.attributes.get("installed_version") == "1.9"
     assert state.attributes.get("latest_version") == "1.9"
-    assert (
-        state.attributes.get("entity_picture")
-        == "https://brands.home-assistant.io/_/mqtt/icon.png"
-    )
+    assert state.attributes.get("entity_picture") is None
 
     async_fire_mqtt_message(hass, latest_version_topic, '{"latest":"2.0"}')
 
@@ -343,7 +344,7 @@ async def test_value_template_float(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/state-topic",
                     "name": "Test Update",
@@ -371,7 +372,7 @@ async def test_empty_json_state_message(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/state-topic",
                     "name": "Test Update",
@@ -416,7 +417,7 @@ async def test_invalid_json_state_message(
     assert (
         "Schema violation after processing payload '{\"update_percentage\":101}' on "
         "topic 'test/state-topic' for entity 'update.test_update': value must be at "
-        "most 100 for dictionary value @ data['update_percentage']" in caplog.text
+        "most 100 at 'update_percentage'" in caplog.text
     )
 
 
@@ -424,7 +425,7 @@ async def test_invalid_json_state_message(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/state-topic",
                     "name": "Test Update",
@@ -520,7 +521,7 @@ async def test_json_state_message(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/state-topic",
                     "value_template": '{{ {"installed_version": value_json.installed, '
@@ -561,7 +562,7 @@ async def test_json_state_message_with_template(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: {
                     "state_topic": "test/installed-version",
                     "latest_version_topic": "test/latest-version",
@@ -598,7 +599,9 @@ async def test_run_install_service(
         blocking=True,
     )
 
-    mqtt_mock.async_publish.assert_called_once_with(command_topic, "install", 0, False)
+    mqtt_mock.async_publish.assert_called_once_with(
+        command_topic, "install", 0, False, message_expiry_interval=None
+    )
 
 
 @pytest.mark.parametrize("hass_config", [DEFAULT_CONFIG])
@@ -693,7 +696,7 @@ async def test_discovery_update_attr(
     "hass_config",
     [
         {
-            mqtt.DOMAIN: {
+            DOMAIN: {
                 update.DOMAIN: [
                     {
                         "name": "Bear",
@@ -723,7 +726,7 @@ async def test_discovery_removal_update(
     hass: HomeAssistant, mqtt_mock_entry: MqttMockHAClientGenerator
 ) -> None:
     """Test removal of discovered update."""
-    data = json.dumps(DEFAULT_CONFIG[mqtt.DOMAIN][update.DOMAIN])
+    data = json.dumps(DEFAULT_CONFIG[DOMAIN][update.DOMAIN])
     await help_test_discovery_removal(hass, mqtt_mock_entry, update.DOMAIN, data)
 
 
@@ -751,7 +754,10 @@ async def test_discovery_update_unchanged_update(
     hass: HomeAssistant, mqtt_mock_entry: MqttMockHAClientGenerator
 ) -> None:
     """Test update of discovered update."""
-    data1 = '{ "name": "Beer", "state_topic": "installed-topic", "latest_version_topic": "latest-topic"}'
+    data1 = (
+        '{ "name": "Beer", "state_topic": "installed-topic",'
+        ' "latest_version_topic": "latest-topic"}'
+    )
     with patch(
         "homeassistant.components.mqtt.update.MqttUpdate.discovery_update"
     ) as discovery_update:
@@ -766,7 +772,10 @@ async def test_discovery_broken(
 ) -> None:
     """Test handling of bad discovery message."""
     data1 = '{ "name": "Beer" }'
-    data2 = '{ "name": "Milk", "state_topic": "installed-topic", "latest_version_topic": "latest-topic" }'
+    data2 = (
+        '{ "name": "Milk", "state_topic": "installed-topic",'
+        ' "latest_version_topic": "latest-topic" }'
+    )
 
     await help_test_discovery_broken(hass, mqtt_mock_entry, update.DOMAIN, data1, data2)
 
@@ -936,8 +945,8 @@ async def test_value_template_fails(
     await mqtt_mock_entry()
     async_fire_mqtt_message(hass, "test-topic", '{"some_var": null }')
     assert (
-        "TypeError: unsupported operand type(s) for *: 'NoneType' and 'int' rendering template"
-        in caplog.text
+        "TypeError: unsupported operand type(s) for *:"
+        " 'NoneType' and 'int' rendering template" in caplog.text
     )
 
 
@@ -949,9 +958,5 @@ async def test_entity_icon_and_entity_picture(
     domain = update.DOMAIN
     config = DEFAULT_CONFIG
     await help_test_entity_icon_and_entity_picture(
-        hass,
-        mqtt_mock_entry,
-        domain,
-        config,
-        default_entity_picture="https://brands.home-assistant.io/_/mqtt/icon.png",
+        hass, mqtt_mock_entry, domain, config
     )

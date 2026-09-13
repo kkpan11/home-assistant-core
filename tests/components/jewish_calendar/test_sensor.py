@@ -1,5 +1,6 @@
 """The tests for the Jewish calendar sensors."""
 
+from collections.abc import AsyncGenerator
 from datetime import datetime as dt
 from typing import Any
 
@@ -7,12 +8,10 @@ from hdate.holidays import HolidayDatabase
 from hdate.parasha import Parasha
 import pytest
 
-from homeassistant.components.jewish_calendar.const import DOMAIN
-from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
-from homeassistant.const import CONF_PLATFORM
 from homeassistant.core import HomeAssistant
-from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
+
+from . import TimeValue, TimeValueSequence
 
 from tests.common import MockConfigEntry
 
@@ -59,7 +58,6 @@ TEST_PARAMS = [
             "attr": {
                 "device_class": "enum",
                 "friendly_name": "Jewish Calendar Holiday",
-                "icon": "mdi:calendar-star",
                 "id": "rosh_hashana_i",
                 "type": "YOM_TOV",
                 "options": lambda: HolidayDatabase(False).get_all_names(),
@@ -77,7 +75,6 @@ TEST_PARAMS = [
             "attr": {
                 "device_class": "enum",
                 "friendly_name": "Jewish Calendar Holiday",
-                "icon": "mdi:calendar-star",
                 "id": "chanukah, rosh_chodesh",
                 "type": "MELACHA_PERMITTED_HOLIDAY, ROSH_CHODESH",
                 "options": lambda: HolidayDatabase(False).get_all_names(),
@@ -95,7 +92,6 @@ TEST_PARAMS = [
             "attr": {
                 "device_class": "enum",
                 "friendly_name": "Jewish Calendar Weekly Torah portion",
-                "icon": "mdi:book-open-variant",
                 "options": [str(p) for p in Parasha],
             },
         },
@@ -143,8 +139,9 @@ TEST_PARAMS = [
             "attr": {
                 "hebrew_year": "5779",
                 "hebrew_month_name": "מרחשוון",
+                "hebrew_month_standard_order": "2",
+                "hebrew_month_biblical_order": "8",
                 "hebrew_day": "6",
-                "icon": "mdi:star-david",
                 "friendly_name": "Jewish Calendar Date",
             },
         },
@@ -417,7 +414,8 @@ SHABBAT_PARAMS = [
             "he_holiday": "ערב שבועות",
         },
         None,
-        id="currently_first_day_of_three_day_type1_yomtov_in_diaspora",  # Type 1 = Sat/Sun/Mon
+        # Type 1 = Sat/Sun/Mon
+        id="currently_first_day_of_three_day_type1_yomtov_in_diaspora",
     ),
     pytest.param(
         "New York",
@@ -433,7 +431,8 @@ SHABBAT_PARAMS = [
             "he_holiday": "שבועות",
         },
         None,
-        id="currently_second_day_of_three_day_type1_yomtov_in_diaspora",  # Type 1 = Sat/Sun/Mon
+        # Type 1 = Sat/Sun/Mon
+        id="currently_second_day_of_three_day_type1_yomtov_in_diaspora",
     ),
     pytest.param(
         "Jerusalem",
@@ -449,7 +448,8 @@ SHABBAT_PARAMS = [
             "he_holiday": "א' ראש השנה",
         },
         None,
-        id="currently_first_day_of_three_day_type2_yomtov_in_israel",  # Type 2 = Thurs/Fri/Sat
+        # Type 2 = Thurs/Fri/Sat
+        id="currently_first_day_of_three_day_type2_yomtov_in_israel",
     ),
     pytest.param(
         "Jerusalem",
@@ -465,7 +465,8 @@ SHABBAT_PARAMS = [
             "he_holiday": "ב' ראש השנה",
         },
         None,
-        id="currently_second_day_of_three_day_type2_yomtov_in_israel",  # Type 2 = Thurs/Fri/Sat
+        # Type 2 = Thurs/Fri/Sat
+        id="currently_second_day_of_three_day_type2_yomtov_in_israel",
     ),
     pytest.param(
         "Jerusalem",
@@ -481,7 +482,8 @@ SHABBAT_PARAMS = [
             "he_holiday": "",
         },
         None,
-        id="currently_third_day_of_three_day_type2_yomtov_in_israel",  # Type 2 = Thurs/Fri/Sat
+        # Type 2 = Thurs/Fri/Sat
+        id="currently_third_day_of_three_day_type2_yomtov_in_israel",
     ),
 ]
 
@@ -546,15 +548,68 @@ async def test_dafyomi_sensor(hass: HomeAssistant, results: str) -> None:
     assert hass.states.get("sensor.jewish_calendar_daf_yomi").state == results
 
 
-async def test_no_discovery_info(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    "test_sequence",
+    [
+        TimeValueSequence(
+            [
+                TimeValue(dt(2025, 6, 10, 17), "14 Sivan 5785"),  # Initial time
+                TimeValue(dt(2025, 6, 10, 23, 0), "15 Sivan 5785"),  # Later in the day
+                TimeValue(dt(2025, 6, 11, 9, 0), "15 Sivan 5785"),  # Next morning
+                TimeValue(dt(2025, 6, 11, 22, 0), "16 Sivan 5785"),  # Next evening
+            ]
+        )
+    ],
+    indirect=True,
+)
+async def test_sensor_date_changes_with_time(
+    hass: HomeAssistant, test_sequence: AsyncGenerator[Any]
 ) -> None:
-    """Test setup without discovery info."""
-    assert SENSOR_DOMAIN not in hass.config.components
-    assert await async_setup_component(
-        hass,
-        SENSOR_DOMAIN,
-        {SENSOR_DOMAIN: {CONF_PLATFORM: DOMAIN}},
-    )
-    await hass.async_block_till_done()
-    assert SENSOR_DOMAIN in hass.config.components
+    """Test the date sensor updates when time crosses boundaries."""
+    async for expected_state in test_sequence():
+        current_state = hass.states.get("sensor.jewish_calendar_date").state
+        assert current_state == expected_state
+
+
+@pytest.mark.parametrize("location_data", ["New York"], indirect=True)
+@pytest.mark.parametrize(
+    "test_sequence",
+    [
+        TimeValueSequence(
+            [
+                TimeValue(dt(2018, 9, 9, 18, 55), "Erev Rosh Hashana"),
+                TimeValue(dt(2018, 9, 9, 19, 1), "Rosh Hashana I"),
+            ]
+        )
+    ],
+    indirect=True,
+)
+async def test_sensor_holiday_changes_at_candle_lighting(
+    hass: HomeAssistant, test_sequence: AsyncGenerator[Any]
+) -> None:
+    """Test that the holiday sensor updates at candle lighting when available."""
+    async for expected_state in test_sequence():
+        current_state = hass.states.get("sensor.jewish_calendar_holiday").state
+        assert current_state == expected_state
+
+
+@pytest.mark.parametrize("location_data", ["New York"], indirect=True)
+@pytest.mark.parametrize(
+    "test_sequence",
+    [
+        TimeValueSequence(
+            [
+                TimeValue(dt(2018, 9, 11, 19, 20), "Rosh Hashana II"),
+                TimeValue(dt(2018, 9, 11, 20, 0), "Tzom Gedaliah"),
+            ]
+        )
+    ],
+    indirect=True,
+)
+async def test_sensor_holiday_changes_at_havdalah(
+    hass: HomeAssistant, test_sequence: AsyncGenerator[Any]
+) -> None:
+    """Test that the holiday sensor updates at havdalah when available."""
+    async for expected_state in test_sequence():
+        current_state = hass.states.get("sensor.jewish_calendar_holiday").state
+        assert current_state == expected_state

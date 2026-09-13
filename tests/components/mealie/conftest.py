@@ -8,6 +8,7 @@ from aiomealie import (
     Mealplan,
     MealplanResponse,
     Recipe,
+    RecipesResponse,
     ShoppingItemsResponse,
     ShoppingListsResponse,
     Statistics,
@@ -63,6 +64,8 @@ def mock_mealie_client() -> Generator[AsyncMock]:
         )
         recipe = Recipe.from_json(load_fixture("get_recipe.json", DOMAIN))
         client.get_recipe.return_value = recipe
+        recipes = RecipesResponse.from_json(load_fixture("get_recipes.json", DOMAIN))
+        client.get_recipes.return_value = recipes
         client.import_recipe.return_value = recipe
         client.get_shopping_lists.return_value = ShoppingListsResponse.from_json(
             load_fixture("get_shopping_lists.json", DOMAIN)
@@ -76,6 +79,8 @@ def mock_mealie_client() -> Generator[AsyncMock]:
         mealplan = Mealplan.from_json(load_fixture("mealplan.json", DOMAIN))
         client.random_mealplan.return_value = mealplan
         client.set_mealplan.return_value = mealplan
+        client.update_mealplan.return_value = mealplan
+        client.delete_mealplan.return_value = mealplan
         yield client
 
 

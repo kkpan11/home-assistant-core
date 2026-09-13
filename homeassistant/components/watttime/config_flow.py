@@ -1,20 +1,13 @@
 """Config flow for WattTime integration."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
 from aiowatttime import Client
 from aiowatttime.errors import CoordinatesNotFoundError, InvalidCredentialsError
 import voluptuous as vol
 
-from homeassistant.config_entries import (
-    ConfigEntry,
-    ConfigFlow,
-    ConfigFlowResult,
-    OptionsFlow,
-)
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import (
     CONF_LATITUDE,
     CONF_LONGITUDE,
@@ -31,6 +24,7 @@ from .const import (
     DOMAIN,
     LOGGER,
 )
+from .coordinator import WattTimeConfigEntry
 
 CONF_LOCATION_TYPE = "location_type"
 
@@ -126,8 +120,9 @@ class WattTimeConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
+    @override
     def async_get_options_flow(
-        config_entry: ConfigEntry,
+        config_entry: WattTimeConfigEntry,
     ) -> WattTimeOptionsFlowHandler:
         """Define the config flow to handle options."""
         return WattTimeOptionsFlowHandler()
@@ -150,7 +145,7 @@ class WattTimeConfigFlow(ConfigFlow, domain=DOMAIN):
 
         try:
             grid_region = await self._client.emissions.async_get_grid_region(
-                user_input[CONF_LATITUDE], user_input[CONF_LONGITUDE]
+                user_input[CONF_LATITUDE], user_input[CONF_LONGITUDE], "co2_moer"
             )
         except CoordinatesNotFoundError:
             return self.async_show_form(
@@ -173,8 +168,8 @@ class WattTimeConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_PASSWORD: self._data[CONF_PASSWORD],
                 CONF_LATITUDE: user_input[CONF_LATITUDE],
                 CONF_LONGITUDE: user_input[CONF_LONGITUDE],
-                CONF_BALANCING_AUTHORITY: grid_region["name"],
-                CONF_BALANCING_AUTHORITY_ABBREV: grid_region["abbrev"],
+                CONF_BALANCING_AUTHORITY: grid_region["region_full_name"],
+                CONF_BALANCING_AUTHORITY_ABBREV: grid_region["region"],
             },
         )
 
@@ -223,6 +218,7 @@ class WattTimeConfigFlow(ConfigFlow, domain=DOMAIN):
             STEP_REAUTH_CONFIRM_DATA_SCHEMA,
         )
 
+    @override
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:

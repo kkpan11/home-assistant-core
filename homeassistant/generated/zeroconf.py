@@ -128,6 +128,10 @@ HOMEKIT = {
         "always_discover": True,
         "domain": "lifx",
     },
+    "LIFX Luna": {
+        "always_discover": True,
+        "domain": "lifx",
+    },
     "LIFX Mini": {
         "always_discover": True,
         "domain": "lifx",
@@ -338,6 +342,11 @@ ZEROCONF = {
             "domain": "apple_tv",
         },
     ],
+    "_altruist._tcp.local.": [
+        {
+            "domain": "altruist",
+        },
+    ],
     "_amzn-alexa._tcp.local.": [
         {
             "domain": "roomba",
@@ -455,6 +464,11 @@ ZEROCONF = {
             "domain": "daikin",
         },
     ],
+    "_droplet._tcp.local.": [
+        {
+            "domain": "droplet",
+        },
+    ],
     "_dvl-deviceapi._tcp.local.": [
         {
             "domain": "devolo_home_control",
@@ -506,6 +520,16 @@ ZEROCONF = {
             "domain": "freebox",
         },
     ],
+    "_gasleser._tcp.local.": [
+        {
+            "domain": "energieleser",
+        },
+    ],
+    "_gaspulse._tcp.local.": [
+        {
+            "domain": "energieleser",
+        },
+    ],
     "_googlecast._tcp.local.": [
         {
             "domain": "cast",
@@ -523,6 +547,11 @@ ZEROCONF = {
     "_hap._udp.local.": [
         {
             "domain": "homekit_controller",
+        },
+    ],
+    "_heos-audio._tcp.local.": [
+        {
+            "domain": "heos",
         },
     ],
     "_homeconnect._tcp.local.": [
@@ -547,6 +576,12 @@ ZEROCONF = {
     ],
     "_http._tcp.local.": [
         {
+            "domain": "airq",
+            "properties": {
+                "device": "air-q",
+            },
+        },
+        {
             "domain": "awair",
             "name": "awair*",
         },
@@ -555,16 +590,56 @@ ZEROCONF = {
             "name": "bosch shc*",
         },
         {
+            "domain": "bsblan",
+            "name": "bsb-lan*",
+        },
+        {
+            "domain": "duco",
+            "name": "duco [[][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][]].*",
+        },
+        {
             "domain": "eheimdigital",
             "name": "eheimdigital._http._tcp.local.",
+        },
+        {
+            "domain": "hdfury",
+            "name": "diva-*",
+        },
+        {
+            "domain": "hdfury",
+            "name": "vertex2-*",
+        },
+        {
+            "domain": "hdfury",
+            "name": "vrroom-*",
+        },
+        {
+            "domain": "homevolt",
+            "name": "homevolt*",
+        },
+        {
+            "domain": "indevolt",
+            "name": "igen_fw*",
         },
         {
             "domain": "lektrico",
             "name": "lektrico*",
         },
         {
+            "domain": "liebherr",
+            "name": "liebherr*",
+        },
+        {
             "domain": "loqed",
             "name": "loqed*",
+        },
+        {
+            "domain": "lunatone",
+            "properties": {
+                "manufacturer": "lunatone industrielle elektronik gmbh",
+                "type": "dali-2-*",
+                "uid": "*",
+            },
         },
         {
             "domain": "nam",
@@ -582,6 +657,10 @@ ZEROCONF = {
         },
         {
             "domain": "powerfox",
+            "name": "powerfox*",
+        },
+        {
+            "domain": "powerfox_local",
             "name": "powerfox*",
         },
         {
@@ -616,6 +695,10 @@ ZEROCONF = {
                 "vendor": "tailwind",
             },
         },
+        {
+            "domain": "velux",
+            "name": "velux_klf_lan_*",
+        },
     ],
     "_hue._tcp.local.": [
         {
@@ -642,6 +725,11 @@ ZEROCONF = {
             "domain": "ipp",
         },
     ],
+    "_kiosker._tcp.local.": [
+        {
+            "domain": "kiosker",
+        },
+    ],
     "_kizbox._tcp.local.": [
         {
             "domain": "overkiz",
@@ -657,6 +745,9 @@ ZEROCONF = {
     "_linkplay._tcp.local.": [
         {
             "domain": "linkplay",
+        },
+        {
+            "domain": "wiim",
         },
     ],
     "_lookin._tcp.local.": [
@@ -737,6 +828,11 @@ ZEROCONF = {
             "domain": "bluesound",
         },
     ],
+    "_mypv._tcp.local.": [
+        {
+            "domain": "my_pv",
+        },
+    ],
     "_nanoleafapi._tcp.local.": [
         {
             "domain": "nanoleaf",
@@ -745,6 +841,11 @@ ZEROCONF = {
     "_nanoleafms._tcp.local.": [
         {
             "domain": "nanoleaf",
+        },
+    ],
+    "_nrgkick._tcp.local.": [
+        {
+            "domain": "nrgkick",
         },
     ],
     "_nut._tcp.local.": [
@@ -757,9 +858,24 @@ ZEROCONF = {
             "domain": "octoprint",
         },
     ],
+    "_openevse._tcp.local.": [
+        {
+            "domain": "openevse",
+        },
+    ],
     "_owserver._tcp.local.": [
         {
             "domain": "onewire",
+        },
+    ],
+    "_philipstv_rpc._tcp.local.": [
+        {
+            "domain": "philips_js",
+        },
+    ],
+    "_philipstv_s_rpc._tcp.local.": [
+        {
+            "domain": "philips_js",
         },
     ],
     "_plexmediasvr._tcp.local.": [
@@ -772,9 +888,19 @@ ZEROCONF = {
             "domain": "plugwise",
         },
     ],
+    "_powerhub._udp.local.": [
+        {
+            "domain": "bitvis",
+        },
+    ],
     "_powerview._tcp.local.": [
         {
             "domain": "hunterdouglas_powerview",
+        },
+    ],
+    "_prana._tcp.local.": [
+        {
+            "domain": "prana",
         },
     ],
     "_printer._tcp.local.": [
@@ -851,6 +977,16 @@ ZEROCONF = {
             "domain": "cambridge_audio",
         },
     ],
+    "_solaredge-modbus._tcp.local.": [
+        {
+            "domain": "solaredge_modbus",
+        },
+    ],
+    "_solarman._tcp.local.": [
+        {
+            "domain": "solarman",
+        },
+    ],
     "_sonos._tcp.local.": [
         {
             "domain": "sonos",
@@ -861,12 +997,11 @@ ZEROCONF = {
             "domain": "soundtouch",
         },
     ],
-    "_spotify-connect._tcp.local.": [
-        {
-            "domain": "spotify",
-        },
-    ],
     "_ssh._tcp.local.": [
+        {
+            "domain": "homee",
+            "name": "homee-*",
+        },
         {
             "domain": "smappee",
             "name": "smappee1*",
@@ -885,9 +1020,24 @@ ZEROCONF = {
             "domain": "cambridge_audio",
         },
     ],
+    "_stromleser._tcp.local.": [
+        {
+            "domain": "energieleser",
+        },
+    ],
     "_system-bridge._tcp.local.": [
         {
             "domain": "system_bridge",
+        },
+    ],
+    "_systemnexa2._tcp.local.": [
+        {
+            "domain": "systemnexa2",
+        },
+    ],
+    "_tbk_vmc._tcp.local.": [
+        {
+            "domain": "flow_it",
         },
     ],
     "_technove-stations._tcp.local.": [
@@ -911,14 +1061,40 @@ ZEROCONF = {
             "name": "uzg-01*",
         },
     ],
+    "_vege._tcp.local.": [
+        {
+            "domain": "vegehub",
+        },
+    ],
     "_viziocast._tcp.local.": [
         {
             "domain": "vizio",
         },
     ],
+    "_waermeleser._tcp.local.": [
+        {
+            "domain": "energieleser",
+        },
+    ],
+    "_wasserleser._tcp.local.": [
+        {
+            "domain": "energieleser",
+        },
+    ],
+    "_wattwaechter._tcp.local.": [
+        {
+            "domain": "wattwaechter",
+        },
+    ],
     "_wled._tcp.local.": [
         {
             "domain": "wled",
+        },
+    ],
+    "_ws._tcp.local.": [
+        {
+            "domain": "hotspring",
+            "name": "watkins_spa*",
         },
     ],
     "_wyoming._tcp.local.": [

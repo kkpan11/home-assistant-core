@@ -1,7 +1,7 @@
 """Support for Qbus thermostat."""
 
 import logging
-from typing import Any
+from typing import Any, override
 
 from qbusmqttapi.const import KEY_PROPERTIES_REGIME, KEY_PROPERTIES_SET_TEMPERATURE
 from qbusmqttapi.discovery import QbusMqttOutput
@@ -13,7 +13,7 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
-from homeassistant.components.mqtt import ReceiveMessage, client as mqtt
+from homeassistant.components.mqtt import client as mqtt
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
@@ -22,7 +22,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import QbusConfigEntry
-from .entity import QbusEntity, add_new_outputs
+from .entity import QbusEntity, create_new_entities
 
 PARALLEL_UPDATES = 0
 
@@ -42,21 +42,24 @@ async def async_setup_entry(
     added_outputs: list[QbusMqttOutput] = []
 
     def _check_outputs() -> None:
-        add_new_outputs(
+        entities = create_new_entities(
             coordinator,
             added_outputs,
             lambda output: output.type == "thermo",
             QbusClimate,
-            async_add_entities,
         )
+        async_add_entities(entities)
 
     _check_outputs()
-    entry.async_on_unload(coordinator.async_add_listener(_check_outputs))
+    coordinator.async_add_listener(_check_outputs)
 
 
 class QbusClimate(QbusEntity, ClimateEntity):
     """Representation of a Qbus climate entity."""
 
+    _state_cls = QbusMqttThermoState
+
+    _attr_name = None
     _attr_hvac_modes = [HVACMode.HEAT]
     _attr_supported_features = (
         ClimateEntityFeature.PRESET_MODE | ClimateEntityFeature.TARGET_TEMPERATURE
@@ -88,6 +91,7 @@ class QbusClimate(QbusEntity, ClimateEntity):
 
         self._request_state_debouncer: Debouncer | None = None
 
+    @override
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         self._request_state_debouncer = Debouncer(
@@ -99,6 +103,7 @@ class QbusClimate(QbusEntity, ClimateEntity):
         )
         await super().async_added_to_hass()
 
+    @override
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set new target preset mode."""
 
@@ -117,6 +122,7 @@ class QbusClimate(QbusEntity, ClimateEntity):
 
         await self._async_publish_output_state(state)
 
+    @override
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
         temperature = kwargs.get(ATTR_TEMPERATURE)
@@ -127,14 +133,8 @@ class QbusClimate(QbusEntity, ClimateEntity):
 
             await self._async_publish_output_state(state)
 
-    async def _state_received(self, msg: ReceiveMessage) -> None:
-        state = self._message_factory.parse_output_state(
-            QbusMqttThermoState, msg.payload
-        )
-
-        if state is None:
-            return
-
+    @override
+    async def _handle_state_received(self, state: QbusMqttThermoState) -> None:
         if preset_mode := state.read_regime():
             self._attr_preset_mode = preset_mode
 
@@ -153,8 +153,6 @@ class QbusClimate(QbusEntity, ClimateEntity):
         if state.type == StateType.EVENT:
             assert self._request_state_debouncer is not None
             await self._request_state_debouncer.async_call()
-
-        self.async_schedule_update_ha_state()
 
     def _set_hvac_action(self) -> None:
         if self.target_temperature is None or self.current_temperature is None:

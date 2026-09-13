@@ -1,6 +1,6 @@
 """The Homee climate platform."""
 
-from typing import Any
+from typing import Any, override
 
 from pyHomee.const import AttributeType, NodeProfile
 from pyHomee.model import HomeeNode
@@ -21,6 +21,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import HomeeConfigEntry
 from .const import CLIMATE_PROFILES, DOMAIN, HOMEE_UNIT_TO_HA_UNIT, PRESET_MANUAL
 from .entity import HomeeNodeEntity
+from .helpers import setup_homee_platform
 
 PARALLEL_UPDATES = 0
 
@@ -31,17 +32,29 @@ ROOM_THERMOSTATS = {
 }
 
 
+async def add_climate_entities(
+    hass: HomeAssistant,
+    config_entry: HomeeConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    nodes: list[HomeeNode],
+) -> None:
+    """Add homee climate entities."""
+    async_add_entities(
+        HomeeClimate(hass, node, config_entry)
+        for node in nodes
+        if node.profile in CLIMATE_PROFILES
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: HomeeConfigEntry,
-    async_add_devices: AddConfigEntryEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the Homee platform for the climate component."""
 
-    async_add_devices(
-        HomeeClimate(node, config_entry)
-        for node in config_entry.runtime_data.nodes
-        if node.profile in CLIMATE_PROFILES
+    await setup_homee_platform(
+        hass, add_climate_entities, async_add_entities, config_entry
     )
 
 
@@ -51,9 +64,11 @@ class HomeeClimate(HomeeNodeEntity, ClimateEntity):
     _attr_name = None
     _attr_translation_key = DOMAIN
 
-    def __init__(self, node: HomeeNode, entry: HomeeConfigEntry) -> None:
+    def __init__(
+        self, hass: HomeAssistant, node: HomeeNode, entry: HomeeConfigEntry
+    ) -> None:
         """Initialize a Homee climate entity."""
-        super().__init__(node, entry)
+        super().__init__(hass, node, entry)
 
         (
             self._attr_supported_features,
@@ -78,20 +93,25 @@ class HomeeClimate(HomeeNodeEntity, ClimateEntity):
         )
 
     @property
+    @override
     def hvac_mode(self) -> HVACMode:
         """Return the hvac operation mode."""
         if ClimateEntityFeature.TURN_OFF in self.supported_features and (
             self._heating_mode is not None
         ):
-            if self._heating_mode.current_value == 0:
+            if self._heating_mode.current_value == self._heating_mode.minimum:
                 return HVACMode.OFF
 
         return HVACMode.HEAT
 
     @property
+    @override
     def hvac_action(self) -> HVACAction:
         """Return the hvac action."""
-        if self._heating_mode is not None and self._heating_mode.current_value == 0:
+        if (
+            self._heating_mode is not None
+            and self._heating_mode.current_value == self._heating_mode.minimum
+        ):
             return HVACAction.OFF
 
         if (
@@ -105,19 +125,23 @@ class HomeeClimate(HomeeNodeEntity, ClimateEntity):
         return HVACAction.HEATING
 
     @property
+    @override
     def preset_mode(self) -> str:
         """Return the present preset mode."""
         if (
             ClimateEntityFeature.PRESET_MODE in self.supported_features
             and self._heating_mode is not None
-            and self._heating_mode.current_value > 0
+            and self._heating_mode.current_value > self._heating_mode.minimum
         ):
             assert self._attr_preset_modes is not None
-            return self._attr_preset_modes[int(self._heating_mode.current_value) - 1]
+            return self._attr_preset_modes[
+                int(self._heating_mode.current_value - self._heating_mode.minimum) - 1
+            ]
 
         return PRESET_NONE
 
     @property
+    @override
     def current_temperature(self) -> float | None:
         """Return the current temperature."""
         if self._temperature is not None:
@@ -125,38 +149,46 @@ class HomeeClimate(HomeeNodeEntity, ClimateEntity):
         return None
 
     @property
+    @override
     def target_temperature(self) -> float:
         """Return the temperature we try to reach."""
         assert self._target_temp is not None
         return self._target_temp.current_value
 
     @property
+    @override
     def min_temp(self) -> float:
         """Return the lowest settable target temperature."""
         assert self._target_temp is not None
         return self._target_temp.minimum
 
     @property
+    @override
     def max_temp(self) -> float:
         """Return the lowest settable target temperature."""
         assert self._target_temp is not None
         return self._target_temp.maximum
 
+    @override
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
         # Currently only HEAT and OFF are supported.
         assert self._heating_mode is not None
         await self.async_set_homee_value(
-            self._heating_mode, float(hvac_mode == HVACMode.HEAT)
+            self._heating_mode,
+            (hvac_mode == HVACMode.HEAT) + self._heating_mode.minimum,
         )
 
+    @override
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set new target preset mode."""
         assert self._heating_mode is not None and self._attr_preset_modes is not None
         await self.async_set_homee_value(
-            self._heating_mode, self._attr_preset_modes.index(preset_mode) + 1
+            self._heating_mode,
+            self._attr_preset_modes.index(preset_mode) + self._heating_mode.minimum + 1,
         )
 
+    @override
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
         assert self._target_temp is not None
@@ -165,21 +197,27 @@ class HomeeClimate(HomeeNodeEntity, ClimateEntity):
                 self._target_temp, kwargs[ATTR_TEMPERATURE]
             )
 
+    @override
     async def async_turn_on(self) -> None:
         """Turn the entity on."""
         assert self._heating_mode is not None
-        await self.async_set_homee_value(self._heating_mode, 1)
+        await self.async_set_homee_value(
+            self._heating_mode, 1 + self._heating_mode.minimum
+        )
 
+    @override
     async def async_turn_off(self) -> None:
         """Turn the entity on."""
         assert self._heating_mode is not None
-        await self.async_set_homee_value(self._heating_mode, 0)
+        await self.async_set_homee_value(
+            self._heating_mode, 0 + self._heating_mode.minimum
+        )
 
 
 def get_climate_features(
     node: HomeeNode,
 ) -> tuple[ClimateEntityFeature, list[HVACMode], list[str] | None]:
-    """Determine supported climate features of a node based on the available attributes."""
+    """Determine supported climate features of a node."""
     features = ClimateEntityFeature.TARGET_TEMPERATURE
     hvac_modes = [HVACMode.HEAT]
     preset_modes: list[str] = []
@@ -193,7 +231,10 @@ def get_climate_features(
         if attribute.maximum > 1:
             # Node supports more modes than off and heating.
             features |= ClimateEntityFeature.PRESET_MODE
-            preset_modes.extend([PRESET_ECO, PRESET_BOOST, PRESET_MANUAL])
+            if attribute.maximum < 5:
+                preset_modes.extend([PRESET_ECO, PRESET_BOOST, PRESET_MANUAL])
+            else:
+                preset_modes.extend([PRESET_ECO])
 
     if len(preset_modes) > 0:
         preset_modes.insert(0, PRESET_NONE)

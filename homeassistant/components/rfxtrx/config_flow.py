@@ -1,19 +1,15 @@
 """Config flow for RFXCOM RFXtrx integration."""
 
-from __future__ import annotations
-
 import asyncio
 from contextlib import suppress
 import copy
 import itertools
-import os
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict, cast, override
 
 import RFXtrx as rfxtrxmod
-import serial
-import serial.tools.list_ports
 import voluptuous as vol
 
+from homeassistant.components import usb
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -43,7 +39,7 @@ from homeassistant.helpers.typing import VolDictType
 from . import (
     DOMAIN,
     DeviceTuple,
-    get_device_id,
+    get_device_tuple_from_device,
     get_device_tuple_from_identifiers,
     get_rfx_object,
 )
@@ -151,7 +147,7 @@ class RfxtrxOptionsFlow(OptionsFlow):
         self._device_entries = device_entries
 
         configure_devices = {
-            entry.id: entry.name_by_user if entry.name_by_user else entry.name
+            entry.id: entry.name_by_user or entry.name
             for entry in device_entries
             if self._get_device_event_code(entry.id) is not None
         }
@@ -184,7 +180,7 @@ class RfxtrxOptionsFlow(OptionsFlow):
         if user_input is not None:
             devices: dict[str, dict[str, Any] | None] = {}
             device: dict[str, Any]
-            device_id = get_device_id(
+            device_id = get_device_tuple_from_device(
                 self._selected_device_object.device,
                 data_bits=user_input.get(CONF_DATA_BITS),
             )
@@ -295,7 +291,7 @@ class RfxtrxOptionsFlow(OptionsFlow):
                 }
             )
         replace_devices = {
-            entry.id: entry.name_by_user if entry.name_by_user else entry.name
+            entry.id: entry.name_by_user or entry.name
             for entry in self._device_entries
             if self._can_replace_device(entry.id)
         }
@@ -329,8 +325,8 @@ class RfxtrxOptionsFlow(OptionsFlow):
         old_device_data = self._get_device_data(old_device)
         new_device_data = self._get_device_data(replace_device)
 
-        old_device_id = "_".join(x for x in old_device_data[CONF_DEVICE_ID])
-        new_device_id = "_".join(x for x in new_device_data[CONF_DEVICE_ID])
+        old_device_id = old_device_data[CONF_DEVICE_ID].unique_id
+        new_device_id = new_device_data[CONF_DEVICE_ID].unique_id
 
         entity_registry = er.async_get(self.hass)
         entity_entries = er.async_entries_for_device(
@@ -418,12 +414,14 @@ class RfxtrxOptionsFlow(OptionsFlow):
 
     def _can_add_device(self, new_rfx_obj: rfxtrxmod.RFXtrxEvent) -> bool:
         """Check if device does not already exist."""
-        new_device_id = get_device_id(new_rfx_obj.device)
+        new_device_id = get_device_tuple_from_device(new_rfx_obj.device)
         for packet_id, entity_info in self.config_entry.data[CONF_DEVICES].items():
             rfx_obj = get_rfx_object(packet_id)
             assert rfx_obj
 
-            device_id = get_device_id(rfx_obj.device, entity_info.get(CONF_DATA_BITS))
+            device_id = get_device_tuple_from_device(
+                rfx_obj.device, entity_info.get(CONF_DATA_BITS)
+            )
             if new_device_id == device_id:
                 return False
 
@@ -497,8 +495,9 @@ class RfxtrxOptionsFlow(OptionsFlow):
 class RfxtrxConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for RFXCOM RFXtrx."""
 
-    VERSION = 1
+    VERSION = 2
 
+    @override
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -556,9 +555,7 @@ class RfxtrxConfigFlow(ConfigFlow, domain=DOMAIN):
             if user_selection == CONF_MANUAL_PATH:
                 return await self.async_step_setup_serial_manual_path()
 
-            dev_path = await self.hass.async_add_executor_job(
-                get_serial_by_id, user_selection
-            )
+            dev_path = user_selection
 
             try:
                 data = await self.async_validate_rfx(device=dev_path)
@@ -568,11 +565,12 @@ class RfxtrxConfigFlow(ConfigFlow, domain=DOMAIN):
             if not errors:
                 return self.async_create_entry(title="RFXTRX", data=data)
 
-        ports = await self.hass.async_add_executor_job(serial.tools.list_ports.comports)
+        ports = await usb.async_scan_serial_ports(self.hass)
         list_of_ports = {}
         for port in ports:
             list_of_ports[port.device] = (
-                f"{port}, s/n: {port.serial_number or 'n/a'}"
+                f"{port.device} - {port.description or 'n/a'}"
+                f", s/n: {port.serial_number or 'n/a'}"
                 + (f" - {port.manufacturer}" if port.manufacturer else "")
             )
         list_of_ports[CONF_MANUAL_PATH] = CONF_MANUAL_PATH
@@ -631,6 +629,7 @@ class RfxtrxConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
+    @override
     def async_get_options_flow(
         config_entry: ConfigEntry,
     ) -> RfxtrxOptionsFlow:
@@ -647,22 +646,10 @@ def _test_transport(host: str | None, port: int | None, device: str | None) -> b
 
     try:
         conn.connect()
-    except (rfxtrxmod.RFXtrxTransportError, TimeoutError):
+    except rfxtrxmod.RFXtrxTransportError, TimeoutError:
         return False
 
     return True
-
-
-def get_serial_by_id(dev_path: str) -> str:
-    """Return a /dev/serial/by-id match for given device if available."""
-    by_id = "/dev/serial/by-id"
-    if not os.path.isdir(by_id):
-        return dev_path
-
-    for path in (entry.path for entry in os.scandir(by_id) if entry.is_symlink()):
-        if os.path.realpath(path) == dev_path:
-            return path
-    return dev_path
 
 
 class CannotConnect(HomeAssistantError):

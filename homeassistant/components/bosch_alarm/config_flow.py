@@ -1,12 +1,10 @@
 """Config flow for Bosch Alarm integration."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Mapping
 import logging
 import ssl
-from typing import Any, Self
+from typing import Any, Self, override
 
 from bosch_alarm_mode2 import Panel
 import voluptuous as vol
@@ -15,6 +13,7 @@ from homeassistant.config_entries import (
     SOURCE_DHCP,
     SOURCE_RECONFIGURE,
     SOURCE_USER,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
 )
@@ -82,7 +81,7 @@ async def try_connect(
     finally:
         await panel.disconnect()
 
-    return (panel.model, panel.serial_number)
+    return (panel.model.name, panel.serial_number)
 
 
 class BoschAlarmConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -95,10 +94,12 @@ class BoschAlarmConfigFlow(ConfigFlow, domain=DOMAIN):
         self.mac: str | None = None
         self.host: str | None = None
 
+    @override
     def is_matching(self, other_flow: Self) -> bool:
         """Return True if other_flow is matching this flow."""
         return self.mac == other_flow.mac or self.host == other_flow.host
 
+    @override
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -142,6 +143,7 @@ class BoschAlarmConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    @override
     async def async_step_dhcp(
         self, discovery_info: DhcpServiceInfo
     ) -> ConfigFlowResult:
@@ -152,7 +154,7 @@ class BoschAlarmConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="already_in_progress")
 
         for entry in self.hass.config_entries.async_entries(DOMAIN):
-            if entry.data[CONF_MAC] == self.mac:
+            if entry.data.get(CONF_MAC) == self.mac:
                 result = self.hass.config_entries.async_update_entry(
                     entry,
                     data={
@@ -162,6 +164,21 @@ class BoschAlarmConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
                 if result:
                     self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_abort(reason="already_configured")
+            if entry.data[CONF_HOST] == discovery_info.ip:
+                if (
+                    not entry.data.get(CONF_MAC)
+                    and entry.state is ConfigEntryState.LOADED
+                ):
+                    result = self.hass.config_entries.async_update_entry(
+                        entry,
+                        data={
+                            **entry.data,
+                            CONF_MAC: self.mac,
+                        },
+                    )
+                    if result:
+                        self.hass.config_entries.async_schedule_reload(entry.entry_id)
                 return self.async_abort(reason="already_configured")
         try:
             # Use load_selector = 0 to fetch the panel model without authentication.

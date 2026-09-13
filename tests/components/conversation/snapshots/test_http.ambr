@@ -6,11 +6,13 @@
         'id': 'conversation.home_assistant',
         'name': 'Home Assistant',
         'supported_languages': list([
+          'af',
           'ar',
           'bg',
           'bn',
           'ca',
           'cs',
+          'cy',
           'da',
           'de',
           'de-CH',
@@ -23,14 +25,18 @@
           'fi',
           'fr',
           'gl',
+          'gu',
           'he',
           'hi',
           'hr',
           'hu',
+          'hy',
           'id',
           'is',
           'it',
+          'ja',
           'ka',
+          'kn',
           'ko',
           'kw',
           'lb',
@@ -42,9 +48,10 @@
           'nb',
           'ne',
           'nl',
+          'pa',
           'pl',
           'pt',
-          'pt-br',
+          'pt-BR',
           'ro',
           'ru',
           'sk',
@@ -59,9 +66,9 @@
           'uk',
           'ur',
           'vi',
-          'zh-cn',
-          'zh-hk',
-          'zh-tw',
+          'zh-CN',
+          'zh-HK',
+          'zh-TW',
         ]),
       }),
       dict({
@@ -281,8 +288,6 @@
             'type': 'entity',
           }),
         ]),
-        'targets': list([
-        ]),
       }),
       'language': 'en',
       'response_type': 'action_done',
@@ -311,39 +316,6 @@
             'name': 'kitchen',
             'type': 'entity',
           }),
-        ]),
-        'targets': list([
-        ]),
-      }),
-      'language': 'en',
-      'response_type': 'action_done',
-      'speech': dict({
-        'plain': dict({
-          'extra_data': None,
-          'speech': 'Turned on the light',
-        }),
-      }),
-    }),
-  })
-# ---
-# name: test_http_processing_intent[homeassistant]
-  dict({
-    'continue_conversation': False,
-    'conversation_id': <ANY>,
-    'response': dict({
-      'card': dict({
-      }),
-      'data': dict({
-        'failed': list([
-        ]),
-        'success': list([
-          dict({
-            'id': 'light.kitchen',
-            'name': 'kitchen',
-            'type': 'entity',
-          }),
-        ]),
-        'targets': list([
         ]),
       }),
       'language': 'en',
@@ -498,7 +470,7 @@
           'name': 'HassTurnOn',
         }),
         'match': True,
-        'sentence_template': '<turn> on (<area> <name>|<name> [in <area>])',
+        'sentence_template': '<turn> on [<the>] {name}',
         'slots': dict({
           'name': 'my cool light',
         }),
@@ -523,7 +495,7 @@
           'name': 'HassTurnOff',
         }),
         'match': True,
-        'sentence_template': '[<turn>] (<area> <name>|<name> [in <area>]) [to] off',
+        'sentence_template': '[<turn>] [<the>] {name} [to] off',
         'slots': dict({
           'name': 'my cool light',
         }),
@@ -553,7 +525,7 @@
           'name': 'HassTurnOn',
         }),
         'match': True,
-        'sentence_template': '<turn> on [(<all>|<the>)] <light> <in> <area>',
+        'sentence_template': '<turn> on [(<all>|<the>)] <light> <in> [<the>] {area}',
         'slots': dict({
           'area': 'kitchen',
           'domain': 'light',
@@ -576,7 +548,7 @@
           }),
           'domain': dict({
             'name': 'domain',
-            'text': 'lights',
+            'text': '',
             'value': 'light',
           }),
           'state': dict({
@@ -589,10 +561,10 @@
           'name': 'HassGetState',
         }),
         'match': True,
-        'sentence_template': '[tell me] how many {on_off_domains:domain} (is|are) {on_off_states:state} [<in_area_floor>]',
+        'sentence_template': '<how_many> <light> <is> {on_off_states:state} [<in>] [<the>] {area}',
         'slots': dict({
           'area': 'kitchen',
-          'domain': 'lights',
+          'domain': 'light',
           'state': 'on',
         }),
         'source': 'builtin',
@@ -664,7 +636,7 @@
           'name': 'HassLightSet',
         }),
         'match': True,
-        'sentence_template': '[<numeric_value_set>] <name> brightness [to] <brightness>',
+        'sentence_template': '[<numeric_value_set>] [<the>] {name} brightness [to] {brightness}[([ ]%)| percent]',
         'slots': dict({
           'brightness': '100',
           'name': 'test light',
@@ -696,7 +668,7 @@
           'name': 'HassLightSet',
         }),
         'match': False,
-        'sentence_template': '[<numeric_value_set>] <name> brightness [to] <brightness>',
+        'sentence_template': '[<numeric_value_set>] [<the>] {name} brightness [to] {brightness}[([ ]%)| percent]',
         'slots': dict({
           'name': 'test light',
         }),
